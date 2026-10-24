@@ -107,18 +107,3 @@ InitTestScene*.unity*
 
 # Auto-generated cache in Assets folder
 /[Aa]ssets/[Ss]ceneDependencyCache*
-
-# Unity project: Cartowords
-Cartowords/[Ll]ibrary/
-Cartowords/[Tt]emp/
-Cartowords/[Oo]bj/
-Cartowords/[Ll]ogs/
-Cartowords/[Uu]ser[Ss]ettings/
-Cartowords/[Bb]uild/
-Cartowords/[Bb]uilds/
-Cartowords/MemoryCaptures/
-Cartowords/Recordings/
-Cartowords/.vs/
-Cartowords/*.csproj
-Cartowords/*.sln
-Cartowords/*.slnx
