@@ -3,7 +3,16 @@
 Unity 非依存の Markdown 解析(`noEngineReferences`)。`Cartograph.Core` だけを参照する。
 `Model/` に型、`Parsing/` に解析本体。いまあるのは 1 ノートの解析 `NoteParser.Parse`(拠点・親子の道・本文量・リンク・霧・理由なしの目印)。
 地図全体は `ProjectAnalyzer.Analyze(AnalysisInput の一覧)`(リンクの解決、孤島、リンク切れ)。毎回すべてのノートを解析し、キャッシュは持たない(revision はプロジェクトを開き直す・名前変更で 0 に戻るため、再利用の鍵にしない)。
-感情の花はこれから追加する。
+
+## 感情の花
+
+`EmotionLexicon`(`Emotion/`)を `NoteParser.Parse(input, lexicon)` / `ProjectAnalyzer.Analyze(inputs, lexicon)` に渡すと、花が作られる。**lexicon が null だと花は咲かない**ので、呼び出し側は `EmotionLexicon.Default`(初版・下書き)などを明示して渡す。
+
+- 対象: 本文の typed の文字だけ(語のすべての文字が typed のとき)。見出し行とコードブロックの中は対象外
+- 最長一致、語は 2 文字以上。い形容詞は語幹で登録(例: `嬉し`)。CSV は 1 行に `語,分類`(喜 / 怒 / 哀 / 楽)。`#` 始まりと空行は無視
+- 否定: 語の直後が「ない」「ません」「くない」などで始まるときは枯れた花(`Flower.Withered`)
+- 1 語につき 1 輪。同じ文(。．！？!? で区切る。行が変われば別の文)の中の同じ語は 1 輪にまとめる
+- 位置は行番号(`Flower.Line`)。見出しより前の語は最初の見出しの所属
 
 ## 共通の約束
 

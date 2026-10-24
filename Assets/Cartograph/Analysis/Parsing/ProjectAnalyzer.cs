@@ -18,7 +18,7 @@ namespace Cartograph.Analysis
     /// </summary>
     public static class ProjectAnalyzer
     {
-        public static AnalysisResult Analyze(IEnumerable<AnalysisInput> inputs)
+        public static AnalysisResult Analyze(IEnumerable<AnalysisInput> inputs, EmotionLexicon lexicon = null)
         {
             if (inputs == null) throw new ArgumentNullException(nameof(inputs));
             var notes = new List<NoteAnalysis>();
@@ -28,7 +28,7 @@ namespace Cartograph.Analysis
                 if (input == null) throw new ArgumentException("入力に null が含まれています。", nameof(inputs));
                 if (!seen.Add(input.NoteId))
                     throw new ArgumentException("同じノートが 2 回渡されました: " + input.NoteId, nameof(inputs));
-                notes.Add(NoteParser.Parse(input));
+                notes.Add(NoteParser.Parse(input, lexicon));
             }
             return Resolve(notes);
         }

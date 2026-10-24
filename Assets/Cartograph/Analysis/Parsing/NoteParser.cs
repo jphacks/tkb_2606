@@ -30,7 +30,11 @@ namespace Cartograph.Analysis
             public string Title;
         }
 
-        public static NoteAnalysis Parse(AnalysisInput input)
+        /// <summary>
+        /// lexicon を渡すと、本文(見出し行とコードブロックを除く)の typed の感情語から花を作る。null なら花は作らない。
+        /// 花は感情語 1 つにつき 1 輪。同じ文(。．！？!? で区切る)の中の同じ語は 1 輪にまとめる。
+        /// </summary>
+        public static NoteAnalysis Parse(AnalysisInput input, EmotionLexicon lexicon = null)
         {
             if (input == null) throw new ArgumentNullException(nameof(input));
             string text = input.Text;
@@ -120,6 +124,8 @@ namespace Cartograph.Analysis
             var links = new List<NoteLink>();
             var fogs = new List<Fog>();
             var marks = new List<Mark>();
+            var flowers = new List<Flower>();
+            bool[] typedMask = lexicon != null && lexicon.Count > 0 ? BuildTypedMask(input.Document) : null;
             for (int i = 0; i < lines.Count; i++)
             {
                 var line = lines[i];
@@ -130,9 +136,56 @@ namespace Cartograph.Analysis
                 if (IsFog(body)) fogs.Add(new Fog(nodeId, line.Number, body));
                 if (line.Level > 0) continue;
                 ParseLinks(body, line.Number, nodeId, links, marks);
+                if (typedMask != null) FindFlowers(text, line, nodeId, lexicon, typedMask, flowers);
             }
 
-            return new NoteAnalysis(input.NoteId, input.Revision, nodes, autoEdges, links, fogs, null, marks);
+            return new NoteAnalysis(input.NoteId, input.Revision, nodes, autoEdges, links, fogs, flowers, marks);
+        }
+
+        private static bool[] BuildTypedMask(LabeledText doc)
+        {
+            var mask = new bool[doc.Length];
+            int pos = 0;
+            foreach (var run in doc.Labels.Runs)
+            {
+                if (run.Origin == Origin.Typed)
+                    for (int k = 0; k < run.Length; k++) mask[pos + k] = true;
+                pos += run.Length;
+            }
+            return mask;
+        }
+
+        private static bool IsSentenceEnd(char c) => c == '。' || c == '．' || c == '！' || c == '？' || c == '!' || c == '?';
+
+        // 行の中の感情語を、左から最長一致で探す。語のすべての文字が typed のときだけ花にする。
+        private static void FindFlowers(string text, Line line, string nodeId, EmotionLexicon lexicon, bool[] typed, List<Flower> flowers)
+        {
+            int end = line.Start + line.Length;
+            int sentence = 0;
+            HashSet<(int, string)> seen = null;
+            int i = line.Start;
+            while (i < end)
+            {
+                if (lexicon.TryMatchAt(text, i, end, out string word, out Emotion emotion) && AllTyped(typed, i, word.Length))
+                {
+                    if (seen == null) seen = new HashSet<(int, string)>();
+                    if (seen.Add((sentence, word)))
+                    {
+                        bool withered = lexicon.IsNegated(text, i + word.Length, end);
+                        flowers.Add(new Flower(nodeId, line.Number, word, emotion, withered));
+                    }
+                    i += word.Length;
+                    continue;
+                }
+                if (IsSentenceEnd(text[i])) sentence++;
+                i++;
+            }
+        }
+
+        private static bool AllTyped(bool[] typed, int start, int length)
+        {
+            for (int k = 0; k < length; k++) if (!typed[start + k]) return false;
+            return true;
         }
 
         private static List<Line> SplitLines(string text)
