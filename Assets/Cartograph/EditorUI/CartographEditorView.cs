@@ -7,6 +7,7 @@ using Cartograph.EditorUI.Navigation;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UIElements;
+using UnityEngine.TextCore.Text;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
@@ -32,6 +33,7 @@ namespace Cartograph.EditorUI
         private bool busy;
         private PanelSettings ownedPanel;
         private Font ownedFont;
+        private FontAsset ownedFontAsset;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -51,22 +53,27 @@ namespace Cartograph.EditorUI
             if (document.panelSettings == null)
             {
                 ownedPanel = ScriptableObject.CreateInstance<PanelSettings>();
-                ownedPanel.scaleMode = PanelScaleMode.ScaleWithScreenSize;
-                ownedPanel.referenceResolution = new Vector2Int(1440, 900);
+                ownedPanel.scaleMode = PanelScaleMode.ConstantPixelSize;
+                ownedPanel.scale = 1;
+                ownedPanel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("CartographTheme");
                 document.panelSettings = ownedPanel;
             }
+            if (document.panelSettings.themeStyleSheet == null)
+                document.panelSettings.themeStyleSheet = Resources.Load<ThemeStyleSheet>("CartographTheme");
             root = document.rootVisualElement;
             root.Clear();
             root.style.flexGrow = 1;
             root.style.backgroundColor = (Color)new Color32(244, 243, 239, 255);
             root.style.color = (Color)new Color32(35, 48, 45, 255);
+            root.style.fontSize = 16;
             // Use an installed Japanese-capable font, never a remote font/CDN.
             var fonts = Font.GetOSInstalledFontNames();
             foreach (var candidate in new[] { "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Hiragino Sans" })
             {
                 if (Array.IndexOf(fonts, candidate) < 0) continue;
                 ownedFont = Font.CreateDynamicFontFromOSFont(candidate, 18);
-                root.style.unityFont = ownedFont;
+                ownedFontAsset = FontAsset.CreateFontAsset(ownedFont);
+                root.style.unityFontDefinition = FontDefinition.FromSDFFont(ownedFontAsset);
                 break;
             }
             var header = Row(root);
@@ -401,6 +408,7 @@ namespace Cartograph.EditorUI
 #endif
             if (workspace != null) workspace.Changed -= Refresh;
             if (ownedPanel != null) Destroy(ownedPanel);
+            if (ownedFontAsset != null) Destroy(ownedFontAsset);
             if (ownedFont != null) Destroy(ownedFont);
         }
     }
