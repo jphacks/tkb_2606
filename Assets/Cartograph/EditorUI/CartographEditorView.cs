@@ -2,6 +2,8 @@ using System;
 using System.Globalization;
 using System.Collections.Generic;
 using System.Text;
+using System.Linq;
+using Cartograph.EditorUI.Navigation;
 using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UIElements;
@@ -16,7 +18,9 @@ namespace Cartograph.EditorUI
     public sealed class CartographEditorView : MonoBehaviour
     {
         private IEditorWorkspace workspace;
-        private VisualElement root, list;
+        private VisualElement root;
+        private NoteTreeView noteTree;
+        private Label projectLabel, breadcrumb;
         private TextField title, body;
         private Label status, count, message, pasteNotice;
         private Button undoButton, redoButton;
@@ -76,16 +80,21 @@ namespace Cartograph.EditorUI
 
             var main = Row(root); main.style.flexGrow = 1; main.style.minHeight = 0;
             var sidebar = new VisualElement();
-            sidebar.style.width = 240; sidebar.style.paddingLeft = 20; sidebar.style.paddingRight = 20;
+            sidebar.style.width = 280; sidebar.style.paddingLeft = 20; sidebar.style.paddingRight = 20;
             main.Add(sidebar);
-            sidebar.Add(new Label("ノート"));
+            projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
+            sidebar.Add(projectLabel);
+            sidebar.Add(new Label("notes / フォルダとノート"));
             Button(sidebar, "＋ 新しいノート", () => Run(async () =>
             {
                 await workspace.FlushSave();
                 await workspace.CreateDocument();
             }));
             var scroll = new ScrollView(); scroll.style.flexGrow = 1;
-            sidebar.Add(scroll); list = scroll.contentContainer;
+            sidebar.Add(scroll);
+            noteTree = new NoteTreeView(); scroll.Add(noteTree);
+            noteTree.NoteSelected += id => Run(async () =>
+            { await workspace.FlushSave(); await workspace.OpenDocument(id); });
 
             var paper = new VisualElement();
             paper.style.flexGrow = 1; paper.style.minWidth = 0;
@@ -94,6 +103,9 @@ namespace Cartograph.EditorUI
             paper.style.paddingTop = 20; paper.style.paddingBottom = 16;
             paper.style.backgroundColor = Color.white;
             main.Add(paper);
+            breadcrumb = new Label(); breadcrumb.style.fontSize = 12;
+            breadcrumb.style.whiteSpace = WhiteSpace.Normal; breadcrumb.style.marginBottom = 12;
+            paper.Add(breadcrumb);
             title = new TextField { name = "document-title" };
             title.style.fontSize = 28; title.style.marginBottom = 16;
             paper.Add(title);
@@ -209,21 +221,20 @@ namespace Cartograph.EditorUI
                 if (!undoHistories.ContainsKey(activeId)) undoHistories.Add(activeId, new TextUndoHistory(submittedBody));
             }
             var documents = workspace.Documents;
+            var navigation = workspace as IProjectNavigationSource;
+            var entries = navigation?.Notes ?? documents.Select(d => new NoteTreeEntry(d.id, d.id + ".md", d.title)).ToArray();
+            projectLabel.text = navigation?.ProjectName ?? "ノート";
+            var selectedEntry = entries.FirstOrDefault(e => e.DocumentId == activeId);
+            breadcrumb.text = selectedEntry == null ? "notes" : "notes / " + selectedEntry.RelativePath.Replace("/", " / ");
             var signature = new StringBuilder(activeId);
-            foreach (var item in documents) signature.Append('|').Append(item.id.Length).Append(':').Append(item.id)
-                .Append(':').Append(item.title?.Length ?? 0).Append(':').Append(item.title);
+            foreach (var item in entries) signature.Append('|').Append(item.DocumentId.Length).Append(':').Append(item.DocumentId)
+                .Append(':').Append(item.RelativePath.Length).Append(':').Append(item.RelativePath)
+                .Append(':').Append(item.Title.Length).Append(':').Append(item.Title);
             // Body edits/save notifications must not reconstruct the entire file list.
             if (listSignature != signature.ToString())
             {
-                listSignature = signature.ToString(); list.Clear();
-                foreach (var item in documents)
-                {
-                    var id = item.id;
-                    var button = Button(list, (id == activeId ? "● " : "") +
-                        (string.IsNullOrWhiteSpace(item.title) ? "無題のノート" : item.title),
-                        () => Run(async () => { await workspace.FlushSave(); await workspace.OpenDocument(id); }));
-                    button.style.whiteSpace = WhiteSpace.Normal;
-                }
+                noteTree.Render(NoteTree.Build(entries), activeId);
+                listSignature = signature.ToString();
             }
             status.text = !workspace.IsPersistent ? "デモ：保存されません" :
                 workspace.State == SaveState.Saved ? "保存済み" :
@@ -360,4 +371,3 @@ namespace Cartograph.EditorUI
         }
     }
 }
-
