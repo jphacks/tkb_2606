@@ -22,7 +22,6 @@ namespace Cartograph.MapUI
             toolbar.Add(new Button(() => canvas.Zoom(1.25f)) { text = "＋", tooltip = "拡大" });
             toolbar.Add(new Button(() => canvas.Zoom(0.8f)) { text = "−", tooltip = "縮小" });
             toolbar.Add(new Button(canvas.Fit) { text = "全体", tooltip = "地図全体を表示" });
-            toolbar.Add(new Button(canvas.FocusSelection) { text = "選択", tooltip = "選択した拠点を中央へ" });
             Add(toolbar); caption.AddToClassList("map-caption"); caption.pickingMode = PickingMode.Ignore; Add(caption);
             info.AddToClassList("map-info"); info.pickingMode = PickingMode.Ignore; Add(info);
             preview = new Button(() =>

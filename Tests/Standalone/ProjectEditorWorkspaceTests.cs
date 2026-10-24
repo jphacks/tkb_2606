@@ -79,6 +79,50 @@ namespace Cartograph.IntegrationTests
             Assert.That(env.History("町/名前"), Does.Contain("insert"));
         }
         [Test]
+        public async Task DeleteRetainsBodyAndHistoryInTrashAndSelectsNext()
+        {
+            var env = new Env(); env.PutNote("A", ""); env.PutNote("B", "次");
+            var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            ws.ReviewDocument("A", 0, Typing.Key("a", 0, "a"));
+            await ws.DeleteDocument("A");
+            Assert.That(ws.Current.id, Is.EqualTo("B")); Assert.That(ws.Documents.Count, Is.EqualTo(1));
+            Assert.That(env.Fs.FileExists(env.Paths.NoteFile(Env.P("A"))), Is.False);
+            var trash = Path.Combine(env.Paths.Root, ".cartograph", "trash");
+            var folders = new System.Collections.Generic.List<string>(env.Fs.GetDirectories(trash));
+            Assert.That(folders.Count, Is.EqualTo(1));
+            var files = new System.Collections.Generic.List<string>(env.Fs.GetFiles(folders[0]));
+            Assert.That(files.Exists(f => env.Fs.ReadAllText(f) == "a"), Is.True);
+            Assert.That(files.Exists(f => (env.Fs.ReadAllText(f) ?? "").Contains("insert")), Is.True);
+            await ws.DeleteDocument("B"); Assert.That(ws.Current, Is.Null); Assert.That(ws.Documents.Count, Is.EqualTo(0));
+        }
+        [Test]
+        public async Task CloseFlushesEditsAndCanReopen()
+        {
+            var env = new Env(); env.PutNote("A", ""); var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            ws.ReviewDocument("A", 0, Typing.Key("a", 0, "a")); await ws.CloseProject();
+            Assert.That(ws.Tree, Is.Null); Assert.That(ws.Current, Is.Null); Assert.That(env.Body("A"), Is.EqualTo("a"));
+            await ws.OpenProject(env.Paths.Root); Assert.That(ws.Current.markdown, Is.EqualTo("a"));
+        }
+        [Test]
+        public async Task FailedSavePreventsCloseAndDelete()
+        {
+            var env = new Env(); env.PutNote("A", ""); var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            ws.ReviewDocument("A", 0, Typing.Key("a", 0, "a")); env.Fs.FailWrites = true;
+            Assert.Throws<IOException>(() => ws.CloseProject().GetAwaiter().GetResult());
+            Assert.Throws<IOException>(() => ws.DeleteDocument("A").GetAwaiter().GetResult());
+            Assert.That(ws.Current.markdown, Is.EqualTo("a")); Assert.That(ws.Tree, Is.Not.Null);
+            env.Fs.FailWrites = false; await ws.FlushSave();
+        }
+        [Test]
+        public async Task NewlineAtMiddleRetainsTypingLabels()
+        {
+            var env = new Env(); env.PutNote("A", "ab"); var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            var change = Typing.Key("a\nb", 1, "\n");
+            Assert.That(ws.ReviewDocument("A", 0, change).Approved, Is.True);
+            await ws.FlushSave(); Assert.That(env.Body("A"), Is.EqualTo("a\nb"));
+            Assert.That(ws.GetLabeledDocument("A").Slice(1, 1).Runs[0].Origin, Is.EqualTo(Origin.Typed));
+        }
+        [Test]
         public async Task EmptyProjectDoesNotInventSavedContent()
         {
             var env = new Env(); var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);

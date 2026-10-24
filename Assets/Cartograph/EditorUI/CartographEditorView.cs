@@ -109,9 +109,15 @@ namespace Cartograph.EditorUI
             projectBar.AddToClassList("project-bar");
             projectBar.style.flexShrink = 0;
             projectPath = new TextField { label = "プロジェクト", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
-            projectPath.style.flexGrow = 1; projectBar.Add(projectPath);
+            projectPath.style.width = 360; projectPath.style.maxWidth = Length.Percent(55); projectBar.Add(projectPath);
             projectPath.SetValueWithoutNotify(PlayerPrefs.GetString("CARTOWORDS.LastProject", ""));
             Button(projectBar, "開く", () => Run(OpenProjectFolder));
+            Button(projectBar, "閉じる", () => Run(async () =>
+            {
+                if (workspace is ProjectEditorWorkspace target) await target.CloseProject();
+                secondaryPane.Hide(); reviewed.Bind(null, null); activeId = null; undoHistories.Clear();
+                ResetMapContext();
+            }));
 #if UNITY_EDITOR
             Button(projectBar, "フォルダを選択", () =>
             {
@@ -142,6 +148,32 @@ namespace Cartograph.EditorUI
             {
                 await CreateEditableNote();
             })); newNoteButton.AddToClassList("primary-action");
+            var deleteConfirmation = new VisualElement(); deleteConfirmation.style.display = DisplayStyle.None;
+            var deleteLabel = new Label(); deleteLabel.style.whiteSpace = WhiteSpace.Normal;
+            string deleteId = null;
+            object deleteTree = null;
+            Button(sidebar, "ノートを削除", () =>
+            {
+                if (workspace.Current == null) return;
+                deleteId = workspace.Current.id; deleteLabel.text = "「" + workspace.Current.title + "」を削除しますか？";
+                deleteTree = (workspace as IReviewingEditorWorkspace)?.Tree;
+                deleteConfirmation.style.display = DisplayStyle.Flex;
+            });
+            deleteConfirmation.Add(deleteLabel);
+            Button(deleteConfirmation, "削除する", () => Run(async () =>
+            {
+                if (workspace is ProjectEditorWorkspace target && deleteId != null)
+                {
+                    if (!ReferenceEquals(deleteTree, target.Tree))
+                        throw new InvalidOperationException("プロジェクトが変わりました。削除するノートを選び直してください。");
+                    await target.DeleteDocument(deleteId);
+                    if (secondaryPane.DocumentId == deleteId) secondaryPane.Hide();
+                    undoHistories.Remove(deleteId); ResetMapContext();
+                }
+                deleteConfirmation.style.display = DisplayStyle.None; deleteId = null;
+            }));
+            Button(deleteConfirmation, "キャンセル", () => { deleteId = null; deleteConfirmation.style.display = DisplayStyle.None; });
+            sidebar.Add(deleteConfirmation);
             var scroll = new ScrollView(); scroll.style.flexGrow = 1;
             sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
@@ -170,11 +202,11 @@ namespace Cartograph.EditorUI
             toolbar.style.flexShrink = 0;
             undoButton = Button(toolbar, "元に戻す", () => ReplayUndo(false));
             redoButton = Button(toolbar, "やり直し", () => ReplayUndo(true));
-            Button(toolbar, "H1", () => PrefixLine("# ")).tooltip = "見出し1";
-            Button(toolbar, "H2", () => PrefixLine("## ")).tooltip = "見出し2";
-            Button(toolbar, "H3", () => PrefixLine("### ")).tooltip = "見出し3";
-            Button(toolbar, "B", () => WrapSelection("**")).tooltip = "太字";
-            Button(toolbar, "I", () => WrapSelection("*")).tooltip = "斜体";
+            Button(toolbar, "大見出し", () => PrefixLine("# "));
+            Button(toolbar, "見出し", () => PrefixLine("## "));
+            Button(toolbar, "小見出し", () => PrefixLine("### "));
+            Button(toolbar, "太字", () => WrapSelection("**"));
+            Button(toolbar, "斜体", () => WrapSelection("*"));
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));

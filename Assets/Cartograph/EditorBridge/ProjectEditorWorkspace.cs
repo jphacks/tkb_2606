@@ -141,6 +141,33 @@ namespace Cartograph.EditorUI
         }
         public DocumentRecord ApplySecondaryEdit(string id, long expectedRevision, string markdown, ChangeOrigin origin)
         { throw new InvalidOperationException("右ペインの編集にもReviewDocumentを使用してください。"); }
+        public async Task DeleteDocument(string id)
+        {
+            if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
+            await FlushSave();
+            try { await project.TrashNote(NotePath.Parse(id)); }
+            catch
+            {
+                open.Remove(id);
+                await LoadDocument(id);
+                throw;
+            }
+            open.Remove(id);
+            if (currentId == id)
+            {
+                currentId = null;
+                var first = project.AllNotes().FirstOrDefault();
+                if (first.IsValid) await OpenDocument(first.Value);
+            }
+            Notify();
+        }
+        public async Task CloseProject()
+        {
+            await FlushSave();
+            if (project != null)
+                foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
+            project = null; currentId = null; open.Clear(); Notify();
+        }
         public async Task FlushSave()
         {
             if (project != null) await project.FlushAll();

@@ -86,6 +86,17 @@ namespace Cartograph.EditorUI
             if (!Enabled) return;
             CaptureSelection();
             if (composing()) return;
+            if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter)
+            {
+                evt.StopImmediatePropagation();
+                if (!Submit(ChangeOrigin.Typing)) return;
+                CaptureSelection();
+                int start = Math.Min(beforeStart, beforeEnd), end = Math.Max(beforeStart, beforeEnd);
+                if (Apply(accepted.Remove(start, end - start).Insert(start, "\n"),
+                    new InputEvidence { Kind = EvidenceKind.Key, Text = "\n" }, true))
+                    field.SelectRange(start + 1, start + 1);
+                return;
+            }
             bool modifier = evt.ctrlKey || evt.commandKey;
             if ((modifier && evt.keyCode == KeyCode.V) || (evt.shiftKey && evt.keyCode == KeyCode.Insert))
             { evt.StopImmediatePropagation(); ClipboardCommand("Paste"); return; }
