@@ -1,8 +1,8 @@
-# Cartograph 実装仕様書(Unity / Claude Code向け)
+# Cartowords 実装仕様書(Unity / Claude Code向け)
 
 > **ドラフトです。** 検討中の内容で、「仮」「未決」と書いた箇所は決まっていません。変更されることがあります。ライセンスは付けていません(すべての権利を保有します)。
 
-この仕様書は、Cartograph の MVP を、Unity 単体で Claude Code が実装するための指示書です。
+この仕様書は、Cartowords の MVP を、Unity 単体で Claude Code が実装するための指示書です。
 
 ## 用語
 

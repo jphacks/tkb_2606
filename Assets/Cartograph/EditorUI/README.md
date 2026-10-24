@@ -1,9 +1,9 @@
-# Cartograph Editor UI
+# Cartowords Editor UI
 
 Unity 6000.3.24f1 / UI Toolkit。現在のUnityプロジェクトはリポジトリ直下。
 
 ## 起動
-Cartograph > Create Editor Demo Scene でデモシーンを作成し、Assets/Cartograph/EditorUI/CartographEditorDemo.unityを単独で開いてPlay。
+CARTOWORDS > Create Editor Demo Scene でデモシーンを作成し、Assets/Cartograph/EditorUI/CartographEditorDemo.unityを単独で開いてPlay。
 画面は横幅1000px以上を推奨。デモの本文はメモリのみで、Play停止で消える。
 
 ## 現在の機能
