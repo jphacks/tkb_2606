@@ -9,7 +9,7 @@ namespace Cartograph.EditorUI.Editor
 {
     public static class CartographSceneBuilder
     {
-        [MenuItem("Cartograph/Create Editor Demo Scene")]
+        [MenuItem("CARTOWORDS/Create Editor Demo Scene")]
         public static void Create()
         {
             const string path = "Assets/Cartograph/EditorUI/CartographEditorDemo.unity";

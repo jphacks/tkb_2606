@@ -1,0 +1,90 @@
+@import url("unity-theme://default");
+
+.cartowords .unity-text-element { color: rgb(229, 233, 242); }
+.cartowords .muted { color: rgb(155, 165, 185); }
+.cartowords .brand { color: rgb(76, 190, 208); -unity-font-style: bold; font-size: 19px; }
+.cartowords .save-status {
+    color: rgb(255, 174, 135);
+    background-color: rgb(63, 40, 38);
+    border-radius: 6px;
+    padding: 5px 10px;
+    font-size: 12px;
+}
+.cartowords .editor-card {
+    background-color: rgb(23, 27, 39);
+    border-width: 1px;
+    border-color: rgb(55, 63, 83);
+    border-radius: 12px;
+}
+.cartowords .section-label {
+    color: rgb(155, 165, 185);
+    font-size: 12px;
+    margin-top: 18px;
+    margin-bottom: 10px;
+}
+.cartowords .unity-button {
+    background-color: rgb(47, 55, 73);
+    border-color: rgb(66, 77, 98);
+    border-width: 1px;
+    border-radius: 6px;
+    margin-right: 6px;
+    padding: 7px 12px;
+    flex-shrink: 0;
+    font-size: 13px;
+}
+.cartowords .unity-button:hover {
+    background-color: rgb(62, 76, 98);
+    border-color: rgb(90, 126, 151);
+}
+.cartowords .unity-button:active { background-color: rgb(29, 91, 111); }
+.cartowords .unity-button:disabled { opacity: 0.38; }
+.cartowords .primary-action {
+    background-color: rgb(29, 108, 132);
+    border-color: rgb(52, 151, 175);
+    margin-bottom: 18px;
+}
+.cartowords .primary-action:hover { background-color: rgb(35, 130, 151); }
+.cartowords .town-folder > .unity-foldout__toggle {
+    margin-top: 8px;
+    margin-bottom: 4px;
+    padding-top: 4px;
+    padding-bottom: 4px;
+}
+.cartowords .note-row {
+    background-color: rgb(26, 31, 45);
+    border-color: rgb(45, 53, 72);
+    margin-top: 3px;
+    margin-bottom: 3px;
+    padding: 8px 10px;
+}
+.cartowords .note-row--selected {
+    background-color: rgb(28, 92, 119);
+    border-color: rgb(48, 146, 168);
+    border-left-width: 3px;
+}
+.cartowords .note-row--selected:hover { background-color: rgb(32, 110, 136); }
+.cartowords .unity-text-field__input {
+    background-color: rgb(37, 43, 59);
+    border-color: rgb(65, 74, 95);
+    border-width: 1px;
+    border-radius: 7px;
+    padding: 12px 14px;
+    color: rgb(235, 239, 246);
+    --unity-cursor-color: rgb(88, 208, 217);
+    --unity-selection-color: rgba(43, 141, 167, 0.5);
+}
+.cartowords .unity-text-field__input:focus { border-color: rgb(64, 158, 180); }
+.cartowords .note-title .unity-text-field__input {
+    background-color: rgba(0, 0, 0, 0);
+    border-width: 0;
+    padding: 4px 0;
+    -unity-font-style: bold;
+}
+.cartowords .note-title .unity-text-field__input:focus { background-color: rgb(32, 39, 54); }
+.cartowords .note-body .unity-text-field__input { padding: 16px; }
+.cartowords .unity-scroller { background-color: rgb(26, 31, 45); }
+.cartowords .unity-scroller .unity-slider__tracker { background-color: rgb(35, 42, 58); }
+.cartowords .unity-scroller .unity-slider__dragger {
+    background-color: rgb(76, 91, 115);
+    border-radius: 5px;
+}
