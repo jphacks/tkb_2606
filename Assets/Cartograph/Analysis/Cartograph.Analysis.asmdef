@@ -1,0 +1,9 @@
+{
+  "name": "Cartograph.Analysis",
+  "rootNamespace": "Cartograph.Analysis",
+  "references": [
+    "Cartograph.Core"
+  ],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}
