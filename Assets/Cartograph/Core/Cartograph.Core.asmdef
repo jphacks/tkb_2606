@@ -1,0 +1,7 @@
+{
+  "name": "Cartograph.Core",
+  "rootNamespace": "Cartograph.Core",
+  "references": [],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}
