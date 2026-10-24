@@ -25,6 +25,10 @@ namespace Cartograph.EditorUI
             if (path.FolderPath.Length == 0 && ids.Count(id => NotePath.Parse(id).Name == path.Name) > 1)
                 throw new InvalidOperationException("同名のノートが複数あります。ルートのノートを一意の名前に変更してください。");
             text = text ?? ""; cursor = Math.Max(0, Math.Min(cursor, text.Length));
+            var parsed = Cartograph.Analysis.NoteParser.Parse(new Cartograph.Analysis.AnalysisInput(
+                NotePath.Parse(current), new LabeledText(text, Origin.Unknown), 0));
+            if (parsed.Links.Any(link => link.TargetNote == target && link.TargetHeading == null))
+                return new RelatedLinkEdit(text, cursor);
             int end = text.IndexOf('\n', cursor); if (end < 0) end = text.Length;
             string link = (end > 0 && text[end - 1] != '\n' ? "\n" : "") + "[[" + target + "]]\n";
             return new RelatedLinkEdit(text.Insert(end, link), end + link.Length);

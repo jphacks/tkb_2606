@@ -131,6 +131,9 @@ namespace Cartograph.EditorUI
                         if (evt.keyCode == KeyCode.UpArrow && rowIndex > 0 && field.cursorPosition.y <= field.resolvedStyle.fontSize * 1.7f) target = rowIndex - 1;
                         if (evt.keyCode == KeyCode.DownArrow && rowIndex + 1 < rows.Count &&
                             field.cursorPosition.y >= field.resolvedStyle.height - field.resolvedStyle.fontSize * 2) target = rowIndex + 1;
+                        int direction = evt.keyCode == KeyCode.UpArrow ? -1 : 1;
+                        while (target >= 0 && target < blocks.Count && blocks[target].IsRelatedLink) target += direction;
+                        if (target >= blocks.Count) return;
                         if (target < 0) return;
                         panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
                         int column = field.cursorIndex;
@@ -143,7 +146,11 @@ namespace Cartograph.EditorUI
                     scroll.Add(field);
                 }
             }
-            for (int i = 0; i < rows.Count; i++) rows[i].Binding.Bind(rows[i].Workspace, rows[i].Workspace.Current);
+            for (int i = 0; i < rows.Count; i++)
+            {
+                rows[i].Binding.Bind(rows[i].Workspace, rows[i].Workspace.Current);
+                rows[i].Field.style.display = blocks[i].IsRelatedLink ? DisplayStyle.None : DisplayStyle.Flex;
+            }
             if (rebuild && focused) QueueFocus(cursor, selection);
         }
         private void QueueFocus(int start, int end)
@@ -245,11 +252,13 @@ namespace Cartograph.EditorUI
             int from, length;
             if (evt.keyCode == KeyCode.Backspace && field.cursorIndex == 0 && index > 0)
             {
+                if (blocks[index - 1].IsRelatedLink) return;
                 from = blocks[index - 1].SourceStart + blocks[index - 1].SourceLength;
                 length = blocks[index].SourceStart + blocks[index].RawOffset(0) - from;
             }
             else if (evt.keyCode == KeyCode.Delete && field.cursorIndex == field.value.Length && index + 1 < blocks.Count)
             {
+                if (blocks[index + 1].IsRelatedLink) return;
                 from = blocks[index].SourceStart + blocks[index].SourceLength;
                 length = blocks[index + 1].SourceStart + blocks[index + 1].RawOffset(0) - from;
             }
@@ -282,6 +291,15 @@ namespace Cartograph.EditorUI
             for (int i = 0; i < blocks.Count; i++)
                 if (start <= blocks[i].SourceStart + blocks[i].SourceLength) { index = i; break; }
             var block = blocks[index];
+            if (block.IsRelatedLink)
+            {
+                int next = index;
+                while (next < blocks.Count && blocks[next].IsRelatedLink) next++;
+                if (next >= blocks.Count)
+                { next = index; while (next >= 0 && blocks[next].IsRelatedLink) next--; }
+                if (next < 0) return;
+                index = next; block = blocks[index]; start = end = block.SourceStart + block.RawOffset(0);
+            }
             int a = DisplayOffset(block, start - block.SourceStart), b = DisplayOffset(block, end - block.SourceStart);
             rows[index].Field.Focus(); rows[index].Field.SelectRange(a, b);
             cursor = start; selection = end;

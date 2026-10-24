@@ -22,6 +22,7 @@ namespace Cartograph.EditorUI.Navigation
                     continue;
                 }
                 if (marker.Success) { fence = marker.Groups[1].Value; continue; }
+                if (Regex.IsMatch(line, @"^\s*\[\[[^\]\r\n]+\]\]\s*$")) continue;
                 if (Regex.IsMatch(line, @"^\s{0,3}(?:([-*_])\s*){3,}$|^\s{0,3}(?:=+|-+)\s*$|^\s*\[[^\]]+\]:\s*\S+")) continue;
                 line = Regex.Replace(line, @"^\s{0,3}(?:>\s*)+", "");
                 line = Regex.Replace(line, @"^\s{0,3}#{1,6}\s+", "");

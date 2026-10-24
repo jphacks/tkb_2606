@@ -52,6 +52,10 @@ namespace Cartograph.EditorUI
         private RelatedNotesControl relatedControl;
         private NoteActionDialog noteDialog;
         private RichNoteEditor rich;
+        private MapSnapshot displayedMap;
+#if UNITY_EDITOR
+        private bool choosingProject;
+#endif
         private int richCursor, richSelection;
         private int EditorCursor => rich != null && rich.Enabled ? richCursor : body.cursorIndex;
         private int EditorSelection => rich != null && rich.Enabled ? richSelection : body.selectIndex;
@@ -386,6 +390,7 @@ namespace Cartograph.EditorUI
             }
             var documents = workspace.Documents;
             relatedControl.SetNotes(current?.id, documents);
+            relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(displayedMap, current?.id));
             QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
             rich.Bind(workspace as IReviewingEditorWorkspace, current);
@@ -488,8 +493,18 @@ namespace Cartograph.EditorUI
         private void SelectProjectFolder()
         {
 #if UNITY_EDITOR
-            var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS 保存先フォルダを選択", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
-            if (!string.IsNullOrEmpty(selected)) Run(() => OpenProjectAt(selected));
+            if (choosingProject || busy) return;
+            choosingProject = true;
+            UnityEditor.EditorApplication.delayCall += () =>
+            {
+                if (this == null) return;
+                try
+                {
+                    var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS 保存先フォルダを選択", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
+                    if (!string.IsNullOrEmpty(selected)) Run(() => OpenProjectAt(selected));
+                }
+                finally { choosingProject = false; QueueRepaint(); }
+            };
 #else
             // A native folder picker is not bundled in the player yet.
             // Preserve the existing path entry fallback instead of a nonfunctional button.
@@ -514,12 +529,24 @@ namespace Cartograph.EditorUI
             secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
             ResetMapContext();
             PlayerPrefs.SetString("CARTOWORDS.LastProject", projectPath.value); PlayerPrefs.Save();
+            QueueRepaint();
         }
+        private void QueueRepaint()
+        {
+            root?.schedule.Execute(() =>
+            {
+                if (this == null || root?.panel == null) return;
+                root.Query<VisualElement>().ForEach(element => element.MarkDirtyRepaint());
+                root.MarkDirtyRepaint();
+            });
+        }
+        private void OnApplicationFocus(bool focused) { if (focused) QueueRepaint(); }
 
         private void ResetMapContext()
         {
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
+            displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());
             mapPanel?.Present(null);
         }
         private static IEnumerable<string> FolderPaths(Cartograph.Core.FolderNode rootFolder)
@@ -556,6 +583,8 @@ namespace Cartograph.EditorUI
             if (this == null || workspace == null || mapPanel == null || snapshot == null ||
                 snapshot.Request.Generation != mapGeneration || !mapGate.TryAccept(snapshot, MapVersions())) return;
             mapPanel.Present(snapshot);
+            displayedMap = snapshot;
+            relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(snapshot, workspace.Current?.id));
         }
         private async void AnalyzeMap(MapRequest request)
         {
