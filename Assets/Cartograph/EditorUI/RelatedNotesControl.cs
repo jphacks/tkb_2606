@@ -14,6 +14,7 @@ namespace Cartograph.EditorUI
         private string currentDocumentId;
 
         public event Action<string> Requested;
+        public event Action<string, bool> ConnectionRequested;
 
         public RelatedNotesControl()
         {
@@ -78,9 +79,12 @@ namespace Cartograph.EditorUI
                 menu.AddItem(target.Key, connections.Contains(targetId), () =>
                 {
                     // Menus can outlive a project refresh: never apply an old target to a new note.
-                    if (ownerId != currentDocumentId || connections.Contains(targetId) ||
+                    if (ownerId != currentDocumentId ||
                         !targets.Any(item => item.Value == targetId)) return;
-                    Requested?.Invoke(targetId);
+                    var connect = !connections.Contains(targetId);
+                    ConnectionRequested?.Invoke(targetId, connect);
+                    // Legacy consumers only supported adding a link.
+                    if (ConnectionRequested == null && connect) Requested?.Invoke(targetId);
                 });
             }
             menu.DropDown(picker.worldBound, picker, default(DropdownMenuSizeMode));

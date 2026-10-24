@@ -53,6 +53,8 @@ namespace Cartograph.EditorUI
         private NoteActionDialog noteDialog;
         private RichNoteEditor rich;
         private MapSnapshot displayedMap;
+        private VisualElement projectTransition;
+        private IVisualElementScheduledItem transitionHideJob;
 #if UNITY_EDITOR
         private bool choosingProject;
 #endif
@@ -221,11 +223,14 @@ namespace Cartograph.EditorUI
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
             Button(toolbar, "分割して開く", () => OpenNoteBeside(activeId, 1));
             relatedControl = new RelatedNotesControl(); paper.Add(relatedControl);
-            relatedControl.Requested += targetId => Run(() =>
+            relatedControl.ConnectionRequested += (targetId, connect) => Run(async () =>
             {
-                var edit = RelatedNoteLink.Insert(body.value, EditorCursor, activeId, targetId,
-                    workspace.Documents.Select(d => d.id));
-                SetBody(edit.Text, edit.Cursor, edit.Cursor); return Task.CompletedTask;
+                if (connect)
+                {
+                    var edit = RelatedNoteLink.Insert(body.value, EditorCursor, activeId, targetId, workspace.Documents.Select(d => d.id));
+                    SetBody(edit.Text, edit.Cursor, edit.Cursor);
+                }
+                else await DisconnectRelated(targetId);
             });
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None;
             pasteNotice.style.color = (Color)new Color32(255, 170, 133, 255);
@@ -270,6 +275,13 @@ namespace Cartograph.EditorUI
                 evt.StopImmediatePropagation(); ReplayUndo(redo);
             }, TrickleDown.TrickleDown);
             noteDialog = new NoteActionDialog(); root.Add(noteDialog);
+            projectTransition = new VisualElement { focusable = true };
+            projectTransition.style.position = Position.Absolute;
+            projectTransition.style.left = projectTransition.style.right = projectTransition.style.top = projectTransition.style.bottom = 0;
+            projectTransition.style.backgroundColor = (Color)new Color32(31, 36, 50, 255);
+            projectTransition.style.alignItems = Align.Center; projectTransition.style.justifyContent = Justify.Center;
+            projectTransition.Add(new Label("保存先を読み込んでいます…"));
+            projectTransition.style.display = DisplayStyle.None; root.Add(projectTransition);
             if (workspace == null) Bind(new ProjectEditorWorkspace());
             else Refresh();
 #if ENABLE_INPUT_SYSTEM
@@ -495,15 +507,17 @@ namespace Cartograph.EditorUI
 #if UNITY_EDITOR
             if (choosingProject || busy) return;
             choosingProject = true;
-            UnityEditor.EditorApplication.delayCall += () =>
+            ShowProjectTransition();
+            UnityEditor.EditorApplication.delayCall += async () =>
             {
                 if (this == null) return;
                 try
                 {
                     var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS 保存先フォルダを選択", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
-                    if (!string.IsNullOrEmpty(selected)) Run(() => OpenProjectAt(selected));
+                    if (!string.IsNullOrEmpty(selected)) await Execute(() => OpenProjectAt(selected));
                 }
-                finally { choosingProject = false; QueueRepaint(); }
+                catch (Exception ex) { if (this != null) { Refresh(); message.text = "操作に失敗しました：" + ex.Message; } }
+                finally { choosingProject = false; QueueRepaint(); HideProjectTransition(); }
             };
 #else
             // A native folder picker is not bundled in the player yet.
@@ -516,11 +530,14 @@ namespace Cartograph.EditorUI
 
         private async Task OpenProjectAt(string selected)
         {
+            ShowProjectTransition();
+            await Task.Yield();
             var target = workspace as IReviewingEditorWorkspace;
             if (target == null) throw new InvalidOperationException("デモを終了して通常モードで起動してください。");
             try { await target.OpenProject(selected); }
             catch
             {
+                HideProjectTransition();
                 projectPath.SetValueWithoutNotify((workspace as ProjectEditorWorkspace)?.ProjectRoot ?? "");
                 throw;
             }
@@ -530,6 +547,41 @@ namespace Cartograph.EditorUI
             ResetMapContext();
             PlayerPrefs.SetString("CARTOWORDS.LastProject", projectPath.value); PlayerPrefs.Save();
             QueueRepaint();
+            HideProjectTransition();
+        }
+        private void ShowProjectTransition()
+        {
+            if (projectTransition == null) return;
+            projectTransition.style.display = DisplayStyle.Flex; projectTransition.BringToFront(); projectTransition.Focus();
+            projectTransition.MarkDirtyRepaint();
+        }
+        private void HideProjectTransition()
+        {
+            transitionHideJob?.Pause();
+            transitionHideJob = projectTransition?.schedule.Execute(() =>
+            {
+                if (this == null) return;
+                if (choosingProjectForTransition || busy) { HideProjectTransition(); return; }
+                QueueRepaint(); projectTransition.style.display = DisplayStyle.None;
+            }).StartingIn(100);
+        }
+        private async Task DisconnectRelated(string targetId)
+        {
+            if (!(workspace is IReviewingEditorWorkspace source) || activeId == null)
+                throw new InvalidOperationException("ノートを開いてください。");
+            await RelatedLinkRemoval.Disconnect(source, activeId, targetId);
+            reviewed.Bind(null, null);
+        }
+        private bool choosingProjectForTransition
+        {
+            get
+            {
+#if UNITY_EDITOR
+                return choosingProject;
+#else
+                return false;
+#endif
+            }
         }
         private void QueueRepaint()
         {
