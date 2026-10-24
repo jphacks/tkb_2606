@@ -49,7 +49,7 @@ namespace Cartograph.EditorUI
             reviewed = new ReviewedTextBinding(body, composing, text => { info.text = text; });
             rich = new RichNoteEditor(composing, text => { info.text = text; });
             Insert(IndexOf(body), rich);
-            rich.Changed += (raw, cursor, selection) => { body.SetValueWithoutNotify(raw); body.SelectRange(cursor, selection); lastSubmitted = raw; };
+            rich.Changed += (raw, cursor, selection) => { if (body.value != raw) body.SetValueWithoutNotify(raw); lastSubmitted = raw; };
             body.RegisterValueChangedCallback(_ => { if (!reviewed.Enabled && !composing()) Submit(ChangeOrigin.Typing); });
             body.RegisterCallback<KeyDownEvent>(evt =>
             {

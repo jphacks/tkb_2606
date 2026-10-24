@@ -46,6 +46,12 @@ namespace Cartograph.EditorUI
 
     public static class MarkdownBlockProjection
     {
+        public static int MapSelectionOffset(int offset, DiffResult diff)
+        {
+            if (offset <= diff.Pos) return offset;
+            if (offset >= diff.Pos + diff.Deleted.Length) return offset + diff.Inserted.Length - diff.Deleted.Length;
+            return diff.Pos + diff.Inserted.Length;
+        }
         private static readonly Regex Prefix = new Regex(@"^( {0,3})(?:(#{1,6})(?:[ \t]+|$)|(?:[-+*]|\d+[.)])[ \t]+|>[ \t]?)");
         public static IReadOnlyList<MarkdownBlock> Parse(string raw)
         {

@@ -27,6 +27,8 @@ namespace Cartograph.EditorUI
         private TextUndoHistory history;
         private bool processing, replaying;
         private int cursor, selection;
+        private int pointerGeneration;
+        private bool pointerSelecting;
         public event Action<string, int, int> Changed;
         public bool Enabled => access != null && id != null;
         public bool CanUndo => Enabled && history != null && history.CanUndo;
@@ -41,6 +43,10 @@ namespace Cartograph.EditorUI
             scroll = new ScrollView(ScrollViewMode.Vertical); scroll.style.flexGrow = 1;
             scroll.style.paddingLeft = 10; scroll.style.paddingRight = 10; scroll.style.paddingTop = 8;
             Add(scroll);
+            RegisterCallback<PointerDownEvent>(_ => { pointerGeneration++; pointerSelecting = true; }, TrickleDown.TrickleDown);
+            RegisterCallback<PointerUpEvent>(_ => { pointerGeneration++; pointerSelecting = false; }, TrickleDown.TrickleDown);
+            RegisterCallback<PointerCancelEvent>(_ => { pointerGeneration++; pointerSelecting = false; });
+            RegisterCallback<PointerCaptureOutEvent>(_ => pointerSelecting = false);
             RegisterCallback<KeyDownEvent>(evt =>
             {
                 if (!Enabled || composing()) return;
@@ -100,6 +106,8 @@ namespace Cartograph.EditorUI
                 for (int i = 0; i < blocks.Count; i++)
                 {
                     var field = new TextField { multiline = true, name = "rich-block-" + i };
+                    field.textSelection.selectAllOnFocus = false;
+                    field.textSelection.selectAllOnMouseUp = false;
                     field.AddToClassList("rich-note-block");
                     field.style.whiteSpace = WhiteSpace.Normal;
                     field.style.fontSize = blocks[i].HeadingLevel == 1 ? 32 : blocks[i].HeadingLevel == 2 ? 26 : blocks[i].HeadingLevel > 0 ? 22 : 18;
@@ -136,7 +144,18 @@ namespace Cartograph.EditorUI
                 }
             }
             for (int i = 0; i < rows.Count; i++) rows[i].Binding.Bind(rows[i].Workspace, rows[i].Workspace.Current);
-            if (rebuild && focused) schedule.Execute(() => FocusRaw(cursor, selection));
+            if (rebuild && focused) QueueFocus(cursor, selection);
+        }
+        private void QueueFocus(int start, int end)
+        {
+            int token = pointerGeneration; string document = id, content = raw;
+            schedule.Execute(() =>
+            {
+                var focused = panel?.focusController.focusedElement as VisualElement;
+                if (pointerSelecting || token != pointerGeneration || id != document || raw != content ||
+                    (focused != null && !Contains(focused))) return;
+                FocusRaw(start, end);
+            });
         }
         private bool HasFocus()
         {
@@ -178,10 +197,18 @@ namespace Cartograph.EditorUI
             var current = Find();
             string updated = current.markdown ?? "";
             if (updated == raw) return;
+            bool ownEdit = rows.Count == blocks.Count && rows.Where((row, index) => row.Field.value != blocks[index].DisplayText).Any();
+            if (!ownEdit) CaptureSelection();
             var diff = TextDiff.Compute(raw, updated);
-            cursor = selection = diff.Pos + diff.Inserted.Length;
+            if (ownEdit) cursor = selection = diff.Pos + diff.Inserted.Length;
+            else
+            {
+                cursor = MarkdownBlockProjection.MapSelectionOffset(cursor, diff);
+                selection = MarkdownBlockProjection.MapSelectionOffset(selection, diff);
+            }
             if (!replaying) history.Record(updated, cursor, selection, access.GetLabeledDocument(id));
             Render(current);
+            if (!ownEdit && HasFocus()) FocusRaw(cursor, selection);
             Changed?.Invoke(raw, cursor, selection);
         }
         public bool Submit(ChangeOrigin origin)
@@ -240,7 +267,7 @@ namespace Cartograph.EditorUI
                 if (!result.Approved) { notice(result.Reason); return; }
                 cursor = selection = from;
                 history.Record(Find().markdown, cursor, selection, access.GetLabeledDocument(id));
-                Render(Find(), true); schedule.Execute(() => FocusRaw(from, from));
+                Render(Find(), true); QueueFocus(from, from);
                 Changed?.Invoke(raw, cursor, selection);
             }
             finally { processing = false; }

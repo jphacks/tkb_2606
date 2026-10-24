@@ -56,4 +56,11 @@ public sealed class MarkdownBlockProjectionTests
         string replacement = block.ReplaceVisible("other and three");
         Assert.That(MarkdownBlockProjection.Parse(replacement)[0].DisplayText, Is.EqualTo("other and three"));
     }
+    [TestCase(1, 1)]
+    [TestCase(4, 5)]
+    [TestCase(9, 10)]
+    public void ExternalEditRemapsSelectionWithoutUnconditionallyCollapsingIt(int before, int after)
+    {
+        Assert.That(MarkdownBlockProjection.MapSelectionOffset(before, new Cartograph.Core.DiffResult(2, "ab", "XYZ")), Is.EqualTo(after));
+    }
 }

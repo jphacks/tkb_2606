@@ -52,6 +52,9 @@ namespace Cartograph.EditorUI
         private RelatedNotesControl relatedControl;
         private NoteActionDialog noteDialog;
         private RichNoteEditor rich;
+        private int richCursor, richSelection;
+        private int EditorCursor => rich != null && rich.Enabled ? richCursor : body.cursorIndex;
+        private int EditorSelection => rich != null && rich.Enabled ? richSelection : body.selectIndex;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -216,7 +219,7 @@ namespace Cartograph.EditorUI
             relatedControl = new RelatedNotesControl(); paper.Add(relatedControl);
             relatedControl.Requested += targetId => Run(() =>
             {
-                var edit = RelatedNoteLink.Insert(body.value, body.cursorIndex, activeId, targetId,
+                var edit = RelatedNoteLink.Insert(body.value, EditorCursor, activeId, targetId,
                     workspace.Documents.Select(d => d.id));
                 SetBody(edit.Text, edit.Cursor, edit.Cursor); return Task.CompletedTask;
             });
@@ -232,7 +235,8 @@ namespace Cartograph.EditorUI
             rich = new RichNoteEditor(() => Composing, ShowReviewNotice); paper.Add(rich);
             rich.Changed += (raw, cursor, selection) =>
             {
-                body.SetValueWithoutNotify(raw); body.SelectRange(cursor, selection);
+                if (body.value != raw) body.SetValueWithoutNotify(raw);
+                richCursor = cursor; richSelection = selection;
                 submittedBody = raw; UpdateCount();
             };
             count = new Label(); count.AddToClassList("muted"); count.style.fontSize = 11; count.style.marginTop = 3; paper.Add(count);
@@ -578,8 +582,8 @@ namespace Cartograph.EditorUI
             if (Composing) return;
             if (rich.Enabled && !rich.Submit(ChangeOrigin.Typing)) return;
             var text = body.value ?? "";
-            var start = Mathf.Clamp(Math.Min(body.cursorIndex, body.selectIndex), 0, text.Length);
-            var end = Mathf.Clamp(Math.Max(body.cursorIndex, body.selectIndex), start, text.Length);
+            var start = Mathf.Clamp(Math.Min(EditorCursor, EditorSelection), 0, text.Length);
+            var end = Mathf.Clamp(Math.Max(EditorCursor, EditorSelection), start, text.Length);
             var replacement = marker + text.Substring(start, end - start) + marker;
             SetBody(text.Substring(0, start) + replacement + text.Substring(end), start + marker.Length,
                 end + marker.Length);
@@ -590,7 +594,7 @@ namespace Cartograph.EditorUI
             if (Composing) return;
             if (rich.Enabled && !rich.Submit(ChangeOrigin.Typing)) return;
             var text = body.value ?? "";
-            var cursor = Mathf.Clamp(body.cursorIndex, 0, text.Length);
+            var cursor = Mathf.Clamp(EditorCursor, 0, text.Length);
             var start = cursor == 0 ? 0 : text.LastIndexOf('\n', cursor - 1) + 1;
             int remove = 0;
             if (prefix.Length == 0 || prefix.StartsWith("#", StringComparison.Ordinal))
@@ -607,6 +611,7 @@ namespace Cartograph.EditorUI
             body.SetValueWithoutNotify(value);
             SubmitBody(ChangeOrigin.Format); UpdateCount();
             body.SelectRange(start, end);
+            richCursor = start; richSelection = end;
             if (rich.Enabled) { rich.Bind(workspace as IReviewingEditorWorkspace, workspace.Current); rich.FocusRaw(start, end); }
             else body.Focus();
         }

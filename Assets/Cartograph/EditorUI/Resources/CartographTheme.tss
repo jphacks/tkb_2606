@@ -71,7 +71,7 @@
     padding: 12px 14px;
     color: rgb(235, 239, 246);
     --unity-cursor-color: rgb(88, 208, 217);
-    --unity-selection-color: rgba(43, 141, 167, 0.5);
+    --unity-selection-color: rgba(37, 144, 197, 0.9);
 }
 .cartowords .unity-text-field__input:focus { border-color: rgb(64, 158, 180); }
 .cartowords .note-title .unity-text-field__input {
