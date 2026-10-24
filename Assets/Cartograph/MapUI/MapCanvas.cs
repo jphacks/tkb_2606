@@ -156,6 +156,12 @@ namespace Cartograph.MapUI
                 else { error += dx; y += sy; }
                 cells.Add(new Vector2Int(x, y));
             }
+            // 道のマスは、両端の拠点の土地(領域)の外側だけ。道は領域の端から出る。
+            int radiusA = MapLayout.LandRadius(nodes[edge.From].TypedChars), radiusB = MapLayout.LandRadius(nodes[edge.To].TypedChars);
+            var startCell = cells[0]; var endCell = cells[cells.Count - 1];
+            bool InRegion(Vector2Int c, Vector2Int center, int radius)
+            { int ox = c.x - center.x, oy = c.y - center.y; return ox * ox + oy * oy <= radius * radius + radius; }
+            bool IsPath(int i) => !InRegion(cells[i], startCell, radiusA) && !InRegion(cells[i], endCell, radiusB);
             for (int i = 0; i < cells.Count; i++)
             {
                 PutLand(cells[i].x, cells[i].y);
@@ -163,10 +169,10 @@ namespace Cartograph.MapUI
                 var step = cells[i + 1] - cells[i];
                 int dir = step.y < 0 ? 0 : step.x > 0 ? 1 : step.y > 0 ? 2 : 3;
                 long from = Key(cells[i].x, cells[i].y), to = Key(cells[i + 1].x, cells[i + 1].y);
-                pathMask[from] = (pathMask.TryGetValue(from, out int m1) ? m1 : 0) | (1 << dir);
-                pathMask[to] = (pathMask.TryGetValue(to, out int m2) ? m2 : 0) | (1 << ((dir + 2) % 4));
-                // 重ね絵は道の途中のマスだけ(両端の拠点のマスには載せない)。
-                if (i > 0 && !edge.Auto && edge.Kind != RoadKind.Unspecified) pathKind[from] = new KeyValuePair<RoadKind, int>(edge.Kind, dir);
+                // 領域の中のマスは土地のまま。領域に接する道のマスには、領域の側へ向かう口が開く。
+                if (IsPath(i)) pathMask[from] = (pathMask.TryGetValue(from, out int m1) ? m1 : 0) | (1 << dir);
+                if (IsPath(i + 1)) pathMask[to] = (pathMask.TryGetValue(to, out int m2) ? m2 : 0) | (1 << ((dir + 2) % 4));
+                if (IsPath(i) && !edge.Auto && edge.Kind != RoadKind.Unspecified) pathKind[from] = new KeyValuePair<RoadKind, int>(edge.Kind, dir);
             }
         }
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
