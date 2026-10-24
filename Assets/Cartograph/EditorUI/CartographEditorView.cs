@@ -8,6 +8,8 @@ using System.Threading.Tasks;
 using UnityEngine;
 using UnityEngine.UIElements;
 using UnityEngine.TextCore.Text;
+using Cartograph.MapUI;
+using Cartowords.MapPresentation;
 #if ENABLE_INPUT_SYSTEM
 using UnityEngine.InputSystem;
 using UnityEngine.InputSystem.LowLevel;
@@ -37,6 +39,15 @@ namespace Cartograph.EditorUI
         private ReviewedTextBinding reviewed;
         private TextField projectPath;
         private Button newNoteButton;
+        private MapPanel mapPanel;
+        private readonly MapSnapshotGate mapGate = new MapSnapshotGate();
+        private string mapProjectKey = Guid.NewGuid().ToString("N"), mapVersionSignature;
+        private long mapGeneration;
+        private IVisualElementScheduledItem mapRequestJob;
+        private System.Threading.SynchronizationContext uiContext;
+        private int uiThread;
+        public event Action<MapRequest> MapRefreshRequested;
+        public event Action<Emotion, Color32> FlowerColorChanged;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -48,12 +59,15 @@ namespace Cartograph.EditorUI
             workspace = value ?? throw new ArgumentNullException(nameof(value));
             activeId = null; listSignature = null; undoHistories.Clear();
             reviewed?.Bind(null, null);
+            ResetMapContext();
             workspace.Changed += Refresh;
             if (root != null) Refresh();
         }
 
         private void Start()
         {
+            uiContext = System.Threading.SynchronizationContext.Current;
+            uiThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
             var document = GetComponent<UIDocument>();
             if (document.panelSettings == null)
             {
@@ -85,7 +99,7 @@ namespace Cartograph.EditorUI
             var header = Row(root);
             header.style.paddingLeft = 24;
             header.style.paddingRight = 24;
-            header.style.height = 64;
+            header.style.height = 42; header.style.flexShrink = 0;
             header.style.alignItems = Align.Center;
             var brand = new Label("CARTOWORDS"); brand.AddToClassList("brand");
             header.Add(brand);
@@ -96,6 +110,7 @@ namespace Cartograph.EditorUI
             projectBar.style.flexShrink = 0;
             projectPath = new TextField { label = "プロジェクト", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
             projectPath.style.flexGrow = 1; projectBar.Add(projectPath);
+            projectPath.SetValueWithoutNotify(PlayerPrefs.GetString("CARTOWORDS.LastProject", ""));
             Button(projectBar, "開く", () => Run(OpenProjectFolder));
 #if UNITY_EDITOR
             Button(projectBar, "フォルダを選択", () =>
@@ -106,11 +121,21 @@ namespace Cartograph.EditorUI
             });
 #endif
 
-            var main = Row(root); main.style.flexGrow = 1; main.style.minHeight = 0;
+            var main = new TwoPaneSplitView(0, 520, TwoPaneSplitViewOrientation.Horizontal);
+            main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
+            mapPanel = new MapPanel(); main.Add(mapPanel);
+            mapPanel.OpenNoteRequested += OpenNoteBeside;
+            mapPanel.FlowerColorChanged += (emotion, color) => FlowerColorChanged?.Invoke(emotion, color);
+            var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
+            rightWorkspace.style.minWidth = 380; rightWorkspace.style.flexGrow = 1; main.Add(rightWorkspace);
+            var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
+            var workbench = Row(rightWorkspace); workbench.AddToClassList("workbench");
+            workbench.style.flexGrow = 1; workbench.style.minHeight = 0;
             var sidebar = new VisualElement();
             sidebar.AddToClassList("sidebar");
-            sidebar.style.width = 280; sidebar.style.paddingLeft = 20; sidebar.style.paddingRight = 20;
-            main.Add(sidebar);
+            sidebar.style.width = 175; sidebar.style.minWidth = 130; sidebar.style.flexShrink = 0;
+            sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
+            workbench.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
             sidebar.Add(projectLabel);
             var sectionLabel = new Label("町とノート"); sectionLabel.AddToClassList("section-label"); sidebar.Add(sectionLabel);
@@ -125,38 +150,38 @@ namespace Cartograph.EditorUI
             noteTree.NoteSelected += id => Run(async () =>
             { await workspace.FlushSave(); await workspace.OpenDocument(id); });
 
-            var editors = Row(main); editors.style.flexGrow = 1; editors.style.minWidth = 0;
+            var editors = Row(workbench); editors.style.flexGrow = 1; editors.style.minWidth = 0;
+            editors.style.flexDirection = FlexDirection.Column;
             var paper = new VisualElement();
-            paper.AddToClassList("editor-card");
-            paper.style.flexGrow = 1; paper.style.flexBasis = 0; paper.style.minWidth = 260;
-            paper.style.marginRight = 24; paper.style.marginBottom = 24;
-            paper.style.paddingLeft = 28; paper.style.paddingRight = 28;
-            paper.style.paddingTop = 20; paper.style.paddingBottom = 16;
+            paper.AddToClassList("editor-sheet");
+            paper.style.flexGrow = 1; paper.style.flexBasis = 0; paper.style.minWidth = 200;
+            paper.style.paddingLeft = 14; paper.style.paddingRight = 14;
+            paper.style.paddingTop = 14; paper.style.paddingBottom = 12;
             editors.Add(paper);
             breadcrumb = new Label(); breadcrumb.style.fontSize = 12;
             breadcrumb.AddToClassList("muted");
             breadcrumb.style.whiteSpace = WhiteSpace.Normal; breadcrumb.style.marginBottom = 12;
-            paper.Add(breadcrumb);
+            noteHeader.Add(breadcrumb);
             title = new TextField { name = "document-title" };
             title.AddToClassList("note-title");
-            title.style.fontSize = 28; title.style.marginBottom = 16;
+            title.style.fontSize = 23; title.style.marginBottom = 8;
             title.style.flexShrink = 0;
-            paper.Add(title);
+            noteHeader.Add(title);
             var toolbar = Row(paper); toolbar.style.flexWrap = Wrap.Wrap;
             toolbar.AddToClassList("format-toolbar");
             toolbar.style.flexShrink = 0;
             undoButton = Button(toolbar, "元に戻す", () => ReplayUndo(false));
             redoButton = Button(toolbar, "やり直し", () => ReplayUndo(true));
-            Button(toolbar, "見出し1", () => PrefixLine("# "));
-            Button(toolbar, "見出し2", () => PrefixLine("## "));
-            Button(toolbar, "見出し3", () => PrefixLine("### "));
-            Button(toolbar, "太字", () => WrapSelection("**"));
-            Button(toolbar, "斜体", () => WrapSelection("*"));
+            Button(toolbar, "H1", () => PrefixLine("# ")).tooltip = "見出し1";
+            Button(toolbar, "H2", () => PrefixLine("## ")).tooltip = "見出し2";
+            Button(toolbar, "H3", () => PrefixLine("### ")).tooltip = "見出し3";
+            Button(toolbar, "B", () => WrapSelection("**")).tooltip = "太字";
+            Button(toolbar, "I", () => WrapSelection("*")).tooltip = "斜体";
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
-            Button(toolbar, "このノートを右に開く", () => OpenNoteBeside(activeId, 1));
-            var hint = new Label("初期試作：Markdown編集。書式ボタンで記号を挿入します。");
+            Button(toolbar, "分割して開く", () => OpenNoteBeside(activeId, 1));
+            var hint = new Label("Markdown / 自分の言葉で書いてみよう");
             hint.AddToClassList("muted");
             hint.style.fontSize = 12; hint.style.marginTop = 8; hint.style.marginBottom = 10;
             hint.style.whiteSpace = WhiteSpace.Normal; hint.style.flexShrink = 0;
@@ -166,7 +191,7 @@ namespace Cartograph.EditorUI
             paper.Add(pasteNotice);
             body = new TextField { name = "document-body", multiline = true };
             body.AddToClassList("note-body");
-            body.style.flexGrow = 1; body.style.minHeight = 150; body.style.fontSize = 18;
+            body.style.flexGrow = 1; body.style.minHeight = 100; body.style.fontSize = 16;
             body.verticalScrollerVisibility = ScrollerVisibility.Auto;
             paper.Add(body);
             reviewed = new ReviewedTextBinding(body, () => Composing, ShowReviewNotice);
@@ -304,6 +329,7 @@ namespace Cartograph.EditorUI
                 undoHistories[activeId] = new TextUndoHistory(submittedBody);
             }
             var documents = workspace.Documents;
+            QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
             secondaryPane.SetReviewWorkspace(workspace as IReviewingEditorWorkspace);
             if (secondaryPane.DocumentId != null)
@@ -314,13 +340,15 @@ namespace Cartograph.EditorUI
             var selectedEntry = entries.FirstOrDefault(e => e.DocumentId == activeId);
             breadcrumb.text = selectedEntry == null ? "notes" : "notes / " + selectedEntry.RelativePath.Replace("/", " / ");
             var signature = new StringBuilder(activeId);
+            var folderPaths = workspace is IReviewingEditorWorkspace reviewing ? FolderPaths(reviewing.Tree).ToArray() : Array.Empty<string>();
+            foreach (var folder in folderPaths) signature.Append("|folder:").Append(folder.Length).Append(':').Append(folder);
             foreach (var item in entries) signature.Append('|').Append(item.DocumentId.Length).Append(':').Append(item.DocumentId)
                 .Append(':').Append(item.RelativePath.Length).Append(':').Append(item.RelativePath)
                 .Append(':').Append(item.Title.Length).Append(':').Append(item.Title);
             // Body edits/save notifications must not reconstruct the entire file list.
             if (listSignature != signature.ToString())
             {
-                noteTree.Render(NoteTree.Build(entries), activeId);
+                noteTree.Render(NoteTree.Build(entries, folderPaths), activeId);
                 listSignature = signature.ToString();
             }
             UpdateSaveStatus();
@@ -373,7 +401,50 @@ namespace Cartograph.EditorUI
             await target.OpenProject(projectPath.value);
             reviewed.Bind(null, null);
             secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
+            ResetMapContext();
+            PlayerPrefs.SetString("CARTOWORDS.LastProject", projectPath.value); PlayerPrefs.Save();
         }
+
+        private void ResetMapContext()
+        {
+            mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
+            mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
+            mapPanel?.Present(null);
+        }
+        private static IEnumerable<string> FolderPaths(Cartograph.Core.FolderNode rootFolder)
+        {
+            if (rootFolder == null) yield break;
+            foreach (var folder in rootFolder.Folders)
+            {
+                yield return folder.Path;
+                foreach (var nested in FolderPaths(folder)) yield return nested;
+            }
+        }
+        private Dictionary<string, long> MapVersions() => workspace.Documents.ToDictionary(d => d.id, d => d.revision, StringComparer.Ordinal);
+        private void QueueMapRequest(IReadOnlyList<DocumentRecord> documents)
+        {
+            var signature = string.Join("|", documents.Select(d => d.id.Length + ":" + d.id + ":" + d.revision));
+            if (signature == mapVersionSignature) return;
+            mapVersionSignature = signature;
+            mapRequestJob?.Pause(); mapPanel.Waiting();
+            mapRequestJob = root.schedule.Execute(() =>
+            {
+                if (this == null || workspace == null) return;
+                var request = new MapRequest(mapProjectKey, ++mapGeneration, MapVersions());
+                MapRefreshRequested?.Invoke(request);
+            }).StartingIn(500);
+        }
+        // Analyzer adapter publishes a COMPLETE snapshot on the UI thread, or this
+        // method marshals it there. Analysis owns parsing; MapUI owns only drawing.
+        public void PresentMap(MapSnapshot snapshot)
+        {
+            if (uiContext != null && System.Threading.Thread.CurrentThread.ManagedThreadId != uiThread)
+            { uiContext.Post(_ => PresentMap(snapshot), null); return; }
+            if (this == null || workspace == null || mapPanel == null || snapshot == null ||
+                snapshot.Request.Generation != mapGeneration || !mapGate.TryAccept(snapshot, MapVersions())) return;
+            mapPanel.Present(snapshot);
+        }
+        public void SetFlowerColor(Emotion emotion, Color32 color) => mapPanel?.SetFlowerColor(emotion, color);
 
         private void ShowReviewNotice(string text)
         {
@@ -505,6 +576,7 @@ namespace Cartograph.EditorUI
 
         private void OnDestroy()
         {
+            mapRequestJob?.Pause();
 #if ENABLE_INPUT_SYSTEM
             if (imeKeyboard != null) { imeKeyboard.onIMECompositionChange -= OnComposition; imeKeyboard.onTextInput -= OnTextInput; }
 #endif

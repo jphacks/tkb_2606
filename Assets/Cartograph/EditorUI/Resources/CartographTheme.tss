@@ -88,3 +88,49 @@
     background-color: rgb(76, 91, 115);
     border-radius: 5px;
 }
+
+/* Map + workbench: reference layout, without changing editor input behavior. */
+.cartowords .map-panel {
+    position: relative;
+    min-width: 240px;
+    background-color: rgb(11, 22, 36);
+    border-right-width: 1px;
+    border-right-color: rgb(47, 61, 79);
+}
+.cartowords .map-tools { position: absolute; top: 44px; right: 12px; width: 52px; }
+.cartowords .map-tools .unity-button { margin-right: 0; font-size: 12px; padding: 6px; }
+.cartowords .map-caption {
+    position: absolute; top: 12px; left: 12px; right: 76px;
+    font-size: 11px; white-space: normal;
+    color: rgb(194, 217, 227); background-color: rgba(16, 28, 44, 0.9);
+    border-radius: 5px; padding: 6px 8px;
+}
+.cartowords .map-info {
+    position: absolute; bottom: 12px; left: 12px; right: 12px;
+    font-size: 11px; white-space: normal;
+    color: rgb(210, 222, 232); background-color: rgba(10, 20, 33, 0.93);
+    border-radius: 6px; padding: 8px 10px;
+}
+.cartowords .map-preview-button { position: absolute; bottom: 65px; right: 12px; font-size: 11px; }
+.cartowords .right-workspace { padding: 10px; background-color: rgb(29, 34, 48); }
+.cartowords .note-header { padding: 4px 12px; flex-shrink: 0; }
+.cartowords .workbench {
+    background-color: rgb(23, 28, 40);
+    border-width: 1px; border-color: rgb(50, 59, 78); border-radius: 9px;
+    overflow: hidden;
+}
+.cartowords .sidebar {
+    padding-top: 14px;
+    border-right-width: 1px; border-right-color: rgb(47, 57, 76);
+}
+.cartowords .sidebar .unity-label { font-size: 12px; }
+.cartowords .sidebar .section-label { margin-top: 8px; }
+.cartowords .sidebar .unity-button { font-size: 12px; padding: 7px 8px; margin-right: 0; }
+.cartowords .editor-sheet { background-color: rgba(0, 0, 0, 0); }
+.cartowords .format-toolbar .unity-button { padding: 4px 7px; font-size: 11px; min-height: 26px; }
+.cartowords .map-palette {
+    position: absolute; top: 230px; right: 12px; width: 210px;
+    padding: 12px; border-width: 1px; border-color: rgb(63, 84, 103);
+    border-radius: 8px; background-color: rgb(25, 37, 54);
+}
+.cartowords .map-palette .unity-base-field__label { min-width: 25px; width: 25px; }

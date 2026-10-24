@@ -29,20 +29,20 @@ namespace Cartograph.EditorUI
             Func<string, long, string, ChangeOrigin, DocumentRecord> apply, Action closed)
         {
             this.composing = composing; this.apply = apply; this.closed = closed;
-            style.flexGrow = 1; style.flexBasis = 0; style.minWidth = 240;
-            style.paddingLeft = 20; style.paddingRight = 20;
-            style.paddingTop = 20; style.paddingBottom = 16;
-            style.marginRight = 20; style.marginBottom = 24;
+            style.flexGrow = 1; style.flexBasis = 0; style.minWidth = 200;
+            style.paddingLeft = 14; style.paddingRight = 14;
+            style.paddingTop = 12; style.paddingBottom = 12;
+            style.marginRight = 14; style.marginLeft = 14; style.marginBottom = 12;
             AddToClassList("editor-card");
             heading = new Label(); heading.style.whiteSpace = WhiteSpace.Normal; Add(heading);
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None; Add(pasteNotice);
-            Add(new Button(() => { if (!composing() && Submit(ChangeOrigin.Typing)) this.closed(); }) { text = "右のノートを閉じる" });
+            Add(new Button(() => { if (!composing() && Submit(ChangeOrigin.Typing)) this.closed(); }) { text = "分割ノートを閉じる" });
             tools = new VisualElement(); tools.style.flexDirection = FlexDirection.Row; Add(tools);
             tools.Add(new Button(() => Replay(false)) { text = "元に戻す" });
             tools.Add(new Button(() => Replay(true)) { text = "やり直し" });
             body = new TextField { multiline = true, name = "secondary-note-body" };
             body.AddToClassList("note-body");
-            body.style.flexGrow = 1; body.style.minHeight = 180; body.style.fontSize = 18;
+            body.style.flexGrow = 1; body.style.minHeight = 100; body.style.fontSize = 16;
             body.verticalScrollerVisibility = ScrollerVisibility.Auto; Add(body);
             info = new Label(); info.style.whiteSpace = WhiteSpace.Normal; Add(info);
             reviewed = new ReviewedTextBinding(body, composing, text => { info.text = text; });
@@ -84,7 +84,15 @@ namespace Cartograph.EditorUI
             reviewed.Bind(reviewingWorkspace, document);
             heading.text = document.title; info.text = DefaultInfo();
             style.display = DisplayStyle.Flex;
-            body.schedule.Execute(() => { body.Focus(); body.SelectRange(offset, offset); });
+            body.schedule.Execute(() =>
+            {
+                body.Focus(); body.SelectRange(offset, offset);
+                body.schedule.Execute(() =>
+                {
+                    var scroll = body.Q<ScrollView>();
+                    if (scroll != null) scroll.scrollOffset = new Vector2(0, Mathf.Max(0, body.cursorPosition.y - scroll.contentViewport.layout.height * 0.3f));
+                });
+            });
             return true;
         }
 

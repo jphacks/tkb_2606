@@ -11,7 +11,7 @@ Copy-Item -LiteralPath $nunit -Destination (Join-Path $resultRoot 'nunit.framewo
 $testExecutable = Join-Path $resultRoot 'ProductionTests.exe'
 $arguments = @('-nologo', '-target:exe', '-nostdlib+', ('-out:"' + $testExecutable + '"'), ('-r:"' + $nunit + '"'))
 $arguments += Get-ChildItem (Join-Path $dataRoot 'UnityReferenceAssemblies/unity-4.8-api') -Recurse -Filter '*.dll' | ForEach-Object { '-r:"' + $_.FullName + '"' }
-foreach ($directory in @('Assets/Cartograph/Core','Assets/Cartograph/EditorBridge','Assets/Cartograph/EditorUI/NavigationModel','Assets/Cartograph/EditorUI/UndoModel','Assets/Cartograph/EditorUI/Tests','Tests/Standalone')) {
+foreach ($directory in @('Assets/Cartograph/Core','Assets/Cartograph/EditorBridge','Assets/Cartograph/MapUI/Model','Assets/Cartograph/EditorUI/NavigationModel','Assets/Cartograph/EditorUI/UndoModel','Assets/Cartograph/EditorUI/Tests','Tests/Standalone')) {
     $arguments += Get-ChildItem (Join-Path $repoRoot $directory) -Recurse -Filter '*.cs' | ForEach-Object { '"' + $_.FullName + '"' }
 }
 foreach ($file in @('EditorContract.cs','ProjectNavigation.cs','SecondaryNoteContract.cs')) {
