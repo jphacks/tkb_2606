@@ -38,7 +38,7 @@ EditorContract.cs、本番保存・履歴・解析、Packages、ProjectSettings�
 
 ## 今試せること
 1. UnityでC:\jphacks\tkb_2606を開き、コンパイル完了を待つ。
-2. Cartograph > Create Editor Demo Scene で作ったシーンを単独で開いてPlay。
+2. CARTOWORDS > Create Editor Demo Scene で作ったシーンを単独で開いてPlay。
 3. 画面幅は1400px程度を推奨。「このノートを右に開く」を押す。
 4. 左のツリーで別ノートを選ぶ。右は前のノートを残し、左だけ切り替わることを確認。
 5. 右の本文を編集し、左でそのノートを開き直して変更が見えることを確認。

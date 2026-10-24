@@ -49,7 +49,7 @@ IEditorWorkspace/EditorContract.cs、本番保存、入力履歴、Packages、Pr
 
 ## あなたが今できる確認
 1. Unity Hubから C:\jphacks\tkb_2606 を開く。使用バージョンは6000.3.24f1。
-2. コンパイルが終わったら Cartograph > Create Editor Demo Scene。
+2. コンパイルが終わったら CARTOWORDS > Create Editor Demo Scene。
 3. Assets/Cartograph/EditorUI/CartographEditorDemo.unityを単独で開いてPlay。
 4. 左の大学用 → 授業 → 科目A/科目Bを開閉し、ノートを切り替える。
 5. 選択印、本文上部のパス、タイトルと本文が一致することを確認。

@@ -168,6 +168,66 @@ namespace Cartograph.Analysis.Tests
                 new[] { new System.Collections.Generic.KeyValuePair<string, Emotion>("怒", Emotion.Anger) }));
         }
 
+        private static string[] DefaultWords(string body) =>
+            Parse("# A\n" + body + "\n", EmotionLexicon.Default).Flowers.Select(f => f.Word).ToArray();
+
+        [Test]
+        public void 初版の辞書_別の語の一部に当たる文では花が咲かない()
+        {
+            foreach (var body in new[]
+            {
+                "大切な人。親切な対応。適切な処理。",            // 切な
+                "音楽します。娯楽として。洋楽と邦楽。",          // 楽し
+                "不安定な状態。不安全な足場。",                  // 不安
+                "放っておく。ほっとく。",                        // ほっと
+                "つららが下がる。つらなる山。",                  // つら
+                "上空しか見えない。",                            // 空し
+            })
+            {
+                Assert.AreEqual(0, DefaultWords(body).Length, body);
+            }
+        }
+
+        [Test]
+        public void 初版の辞書_除外語の後ろの本物の感情語は咲く()
+        {
+            CollectionAssert.AreEqual(new[] { "楽し" }, DefaultWords("音楽を楽しむ"));
+            CollectionAssert.AreEqual(new[] { "不安" }, DefaultWords("不安定だが不安もある"));
+        }
+
+        [Test]
+        public void 初版の辞書_活用した形と否定にも当たる()
+        {
+            var r = Parse("# A\n嬉しかった。悲しみ。楽しかった。切ない。つらくない。面白くない。\n", EmotionLexicon.Default);
+
+            CollectionAssert.AreEqual(new[] { "嬉し", "悲し", "楽し", "切ない", "つらく", "面白" }, r.Flowers.Select(f => f.Word).ToArray());
+            CollectionAssert.AreEqual(new[] { false, false, false, false, true, true }, r.Flowers.Select(f => f.Withered).ToArray());
+        }
+
+        [Test]
+        public void 除外語は_typedでなくても読み飛ばされ_分類は除外と書く()
+        {
+            var lex = EmotionLexicon.FromCsv("楽し,楽\n音楽,除外\n", out var errors);
+            Assert.AreEqual(0, errors.Count);
+            Assert.AreEqual(1, lex.Count);
+            Assert.AreEqual(1, lex.ExcludedCount);
+            Assert.AreEqual(0, Parse("# A\n音楽します\n", lex).Flowers.Count);
+            Assert.AreEqual(0, Parse("# A\n音楽します\n", lex, Origin.Unknown).Flowers.Count);
+        }
+
+        [Test]
+        public void 初版の辞書_読み込みに問題がなく_重複もない()
+        {
+            var lines = typeof(EmotionLexicon).Assembly.GetType("Cartograph.Analysis.DefaultEmotionWords")
+                .GetField("Csv").GetRawConstantValue().ToString()
+                .Split('\n').Where(l => l.Length > 0 && l[0] != '#').ToArray();
+            var lex = EmotionLexicon.FromCsv(string.Join("\n", lines), out var errors);
+
+            Assert.AreEqual(0, errors.Count, string.Join("\n", errors));
+            Assert.AreEqual(lines.Length, lex.Count + lex.ExcludedCount);     // 重複で落ちた語がない
+            Assert.Greater(lex.ExcludedCount, 0);
+        }
+
         [Test]
         public void 初版の辞書が読み込め_4種すべての語がある()
         {
