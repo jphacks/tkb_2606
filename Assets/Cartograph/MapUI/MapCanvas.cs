@@ -9,12 +9,6 @@ namespace Cartograph.MapUI
 {
     public sealed class MapCanvas : VisualElement
     {
-        private readonly struct Cell
-        {
-            public readonly int X, Y;
-            public readonly Color32 Color;
-            public Cell(int x, int y, Color32 color) { X = x; Y = y; Color = color; }
-        }
         private readonly struct Quad
         {
             public readonly Rect Rect;
@@ -32,7 +26,8 @@ namespace Cartograph.MapUI
         };
         private MapSnapshot snapshot;
         private Dictionary<string, MapPoint> positions = new Dictionary<string, MapPoint>();
-        private readonly Dictionary<long, Cell> land = new Dictionary<long, Cell>();
+        private readonly HashSet<long> land = new HashSet<long>();
+        private int frame;
         private readonly Dictionary<string, MapNode> nodes = new Dictionary<string, MapNode>();
         private string selected, lastClick;
         private float lastClickAt;
@@ -49,6 +44,8 @@ namespace Cartograph.MapUI
             labels.style.position = Position.Absolute; labels.style.left = labels.style.top = 0;
             labels.style.right = labels.style.bottom = 0; Add(labels);
             generateVisualContent += Draw;
+            // 花と旗のアニメ。拡大率が小さい(描く数が多い)時は止めて、再描画を増やさない。
+            schedule.Execute(() => { frame++; if (viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) MarkDirtyRepaint(); }).Every(140);
             RegisterCallback<GeometryChangedEvent>(_ =>
             { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
             RegisterCallback<PointerDownEvent>(evt =>
@@ -113,11 +110,10 @@ namespace Cartograph.MapUI
                     nodes.Add(node.Id, node);
                     var point = positions[node.Id]; int radius = MapLayout.LandRadius(node.TypedChars);
                     int cx = (int)(point.X / MapLayout.Tile), cy = (int)(point.Y / MapLayout.Tile);
-                    int tone = MapLayout.StableHash(node.Town) % 22;
                     for (int x = -radius; x <= radius; x++)
                     for (int y = -radius; y <= radius; y++)
                         if (x * x + y * y <= radius * radius + radius)
-                            PutLand(cx + x, cy + y, new Color32((byte)(55 + tone), (byte)(91 + tone), 91, 255));
+                            PutLand(cx + x, cy + y);
                 }
                 foreach (var edge in value.Roads) Carve(positions[edge.From], positions[edge.To]);
             }
@@ -125,7 +121,8 @@ namespace Cartograph.MapUI
             if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
             Repaint();
         }
-        private void PutLand(int x, int y, Color32 color) => land[((long)x << 32) | (uint)y] = new Cell(x, y, color);
+        private static long Key(int x, int y) => ((long)x << 32) | (uint)y;
+        private void PutLand(int x, int y) => land.Add(Key(x, y));
         private void Carve(MapPoint a, MapPoint b)
         {
             int x = (int)(a.X / MapLayout.Tile), y = (int)(a.Y / MapLayout.Tile);
@@ -133,8 +130,7 @@ namespace Cartograph.MapUI
             int dx = Math.Abs(ex - x), dy = Math.Abs(ey - y), sx = x < ex ? 1 : -1, sy = y < ey ? 1 : -1, error = dx - dy;
             for (int step = 0; step <= dx + dy; step++)
             {
-                long key = ((long)x << 32) | (uint)y;
-                if (!land.ContainsKey(key)) PutLand(x, y, new Color32(42, 63, 74, 255));
+                PutLand(x, y);
                 if (x == ex && y == ey) break;
                 int twice = 2 * error;
                 if (twice > -dy) { error -= dy; x += sx; }
@@ -223,12 +219,16 @@ namespace Cartograph.MapUI
         private void Draw(MeshGenerationContext context)
         {
             var quads = new List<Quad>();
-            // Brick darkness stays behind carved land. No animation/continuous repaint loop.
-            for (int y = 0; y < contentRect.height; y += 20)
-            for (int x = -10; x < contentRect.width; x += 24)
-                AddQuad(quads, x + (y / 20 % 2) * 12, y, 23, 19, new Color32(13, 24, (byte)(36 + (x + y + 5000) % 5), 255));
-            foreach (var cell in land.Values) WorldQuad(quads, cell.X * MapLayout.Tile, cell.Y * MapLayout.Tile, MapLayout.Tile - 0.6f, cell.Color);
-            Flush(context, quads); quads.Clear();
+            var art = MapArt.Instance; var sprites = new List<SpriteDraw>();
+            if (art.HasTiles) AddTerrain(sprites, quads, art);
+            else
+            {
+                // 素材が読めない時の代用(色つきの四角)。
+                AddQuad(quads, 0, 0, contentRect.width, contentRect.height, new Color32(13, 24, 38, 255));
+                foreach (long key in land)
+                    WorldQuad(quads, (int)(key >> 32) * MapLayout.Tile, (int)(uint)key * MapLayout.Tile, MapLayout.Tile - 0.6f, new Color32(60, 96, 91, 255));
+            }
+            Flush(context, quads); quads.Clear(); FlushSprites(context, sprites); sprites.Clear();
             if (snapshot == null) return;
             var painter = context.painter2D;
             foreach (var edge in snapshot.Roads)
@@ -261,25 +261,11 @@ namespace Cartograph.MapUI
                     WorldQuad(quads, p.X + x * MapLayout.Tile, p.Y, MapLayout.Tile, new Color32(181, 193, 208, 125));
             }
             foreach (var node in snapshot.Nodes)
-            {
-                var p = viewport.Screen(positions[node.Id]);
-                if (node.Id == selected) AddQuad(quads, p.X - 9, p.Y - 9, 18, 18, new Color32(86, 210, 218, 255));
-                AddQuad(quads, p.X - 5, p.Y - 5, 10, 10, new Color32(210, 230, 188, 255));
-            }
-            foreach (var flower in snapshot.Flowers)
-            {
-                if (nodes[flower.Node].TypedChars == 0) continue;
-                var p = viewport.Screen(positions[flower.Node]);
-                int hash = MapLayout.StableHash(flower.Node + ":" + flower.Line);
-                float x = p.X + (hash % 5 - 2) * 7, y = p.Y + (hash / 5 % 5 - 2) * 7;
-                var color = flower.Withered ? new Color32(131, 129, 126, 255) : flowerColors[flower.Emotion];
-                AddQuad(quads, x, y + 2, 2, 7, new Color32(112, 151, 119, 255));
-                int shape = (int)flower.Emotion;
-                if (shape == 0) { AddQuad(quads, x - 3, y - 1, 8, 3, color); AddQuad(quads, x, y - 4, 2, 9, color); }
-                else if (shape == 1) { AddQuad(quads, x - 3, y - 3, 7, 7, color); AddQuad(quads, x - 1, y - 5, 3, 11, color); }
-                else if (shape == 2) { AddQuad(quads, x, y - 5, 2, 9, color); AddQuad(quads, x - 2, y - 1, 6, 4, color); }
-                else { AddQuad(quads, x - 4, y - 4, 3, 3, color); AddQuad(quads, x + 2, y - 4, 3, 3, color); AddQuad(quads, x - 4, y + 2, 9, 3, color); }
-            }
+                if (node.Id == selected)
+                { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 14, p.Y - 14, 28, 28, new Color32(86, 210, 218, 255)); }
+            Flush(context, quads); quads.Clear();
+            AddFlowers(sprites, art); FlushSprites(context, sprites); sprites.Clear();
+            AddFlags(sprites, quads, art); FlushSprites(context, sprites); sprites.Clear();
             foreach (var mark in snapshot.Marks)
             {
                 var p = viewport.Screen(positions[mark.Node]);
@@ -287,6 +273,123 @@ namespace Cartograph.MapUI
                 AddQuad(quads, p.X + 11, p.Y - 23, 4, 9, gold); AddQuad(quads, p.X + 11, p.Y - 11, 4, 3, gold);
             }
             Flush(context, quads);
+        }
+        private readonly struct SpriteDraw
+        {
+            public readonly Rect Rect;
+            public readonly Sprite Sprite;
+            public SpriteDraw(Rect rect, Sprite sprite) { Rect = rect; Sprite = sprite; }
+        }
+        // 1マス(世界座標で Tile)ごとの絵。隣のマスと辺をそろえて、拡大率が中途半端でも隙間を出さない。
+        private void AddTile(List<SpriteDraw> sprites, int cx, int cy, Sprite sprite)
+        {
+            if (sprite == null) return;
+            var a = viewport.Screen(new MapPoint(cx * MapLayout.Tile - MapLayout.Tile / 2, cy * MapLayout.Tile - MapLayout.Tile / 2));
+            var b = viewport.Screen(new MapPoint(cx * MapLayout.Tile + MapLayout.Tile / 2, cy * MapLayout.Tile + MapLayout.Tile / 2));
+            var rect = Rect.MinMaxRect(Mathf.Round(a.X), Mathf.Round(a.Y), Mathf.Round(b.X), Mathf.Round(b.Y));
+            if (rect.Overlaps(contentRect)) sprites.Add(new SpriteDraw(rect, sprite));
+        }
+        // 絵の下の辺の中央を、世界座標の (x, bottom) に合わせて置く。
+        private bool AddAnchored(List<SpriteDraw> sprites, float x, float bottom, Sprite sprite)
+        {
+            if (sprite == null) return false;
+            var r = sprite.rect; float s = viewport.Scale;
+            var p = viewport.Screen(new MapPoint(x, bottom));
+            var rect = Rect.MinMaxRect(Mathf.Round(p.X - r.width * s / 2), Mathf.Round(p.Y - r.height * s),
+                Mathf.Round(p.X + r.width * s / 2), Mathf.Round(p.Y));
+            if (!rect.Overlaps(contentRect)) return false;
+            sprites.Add(new SpriteDraw(rect, sprite)); return true;
+        }
+        private void AddTerrain(List<SpriteDraw> sprites, List<Quad> quads, MapArt art)
+        {
+            float tile = MapLayout.Tile;
+            var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(contentRect.width, contentRect.height));
+            int x0 = Mathf.FloorToInt(topLeft.X / tile + 0.5f) - 1, x1 = Mathf.FloorToInt(bottomRight.X / tile + 0.5f) + 1;
+            int y0 = Mathf.FloorToInt(topLeft.Y / tile + 0.5f) - 1, y1 = Mathf.FloorToInt(bottomRight.Y / tile + 0.5f) + 1;
+            // 引いて見た時は、壁を1枚ずつ描かず暗い色で塗る(描く数を抑える)。
+            if ((long)(x1 - x0 + 1) * (y1 - y0 + 1) > 20000)
+                AddQuad(quads, 0, 0, contentRect.width, contentRect.height, new Color32(34, 30, 34, 255));
+            else
+                for (int y = y0; y <= y1; y++)
+                for (int x = x0; x <= x1; x++)
+                    if (!land.Contains(Key(x, y))) AddTile(sprites, x, y, art.Wall[MapLayout.StableHash(x + "," + y) % art.Wall.Length]);
+            foreach (long key in land)
+            {
+                int x = (int)(key >> 32), y = (int)(uint)key;
+                if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+                // 壁に接する辺の組み合わせ: 上=1 右=2 下=4 左=8。縁なしの時だけ、斜めが壁の角を調べる。
+                int mask = (land.Contains(Key(x, y - 1)) ? 0 : 1) | (land.Contains(Key(x + 1, y)) ? 0 : 2)
+                    | (land.Contains(Key(x, y + 1)) ? 0 : 4) | (land.Contains(Key(x - 1, y)) ? 0 : 8);
+                Sprite sprite;
+                if (mask != 0) sprite = art.Border[mask];
+                else
+                {
+                    int inner = !land.Contains(Key(x - 1, y - 1)) ? 0 : !land.Contains(Key(x + 1, y - 1)) ? 1
+                        : !land.Contains(Key(x + 1, y + 1)) ? 2 : !land.Contains(Key(x - 1, y + 1)) ? 3 : -1;
+                    sprite = inner >= 0 && inner < art.BorderInner.Length ? art.BorderInner[inner]
+                        : art.Ground[MapLayout.StableHash(x + ":" + y) % art.Ground.Length];
+                }
+                AddTile(sprites, x, y, sprite);
+            }
+        }
+        private void AddFlowers(List<SpriteDraw> sprites, MapArt art)
+        {
+            if (snapshot == null) return;
+            var found = new List<KeyValuePair<float, SpriteDraw>>();
+            var one = new List<SpriteDraw>(1);
+            foreach (var flower in snapshot.Flowers)
+            {
+                if (nodes[flower.Node].TypedChars == 0) continue;
+                int emotion = (int)flower.Emotion, hash = MapLayout.StableHash(flower.Node + ":" + flower.Line);
+                var frames = art.Flowers[emotion];
+                var sprite = flower.Withered ? art.Withered[emotion] : frames.Length == 0 ? null : frames[(frame + hash) % frames.Length];
+                var p = positions[flower.Node];
+                // 拠点のマスと、そのまわり1マスのどこかに咲かせる。
+                float x = p.X + (hash % 3 - 1) * MapLayout.Tile, bottom = p.Y + (hash / 3 % 3 - 1) * MapLayout.Tile + MapLayout.Tile / 2;
+                one.Clear();
+                if (AddAnchored(one, x, bottom, sprite)) found.Add(new KeyValuePair<float, SpriteDraw>(bottom, one[0]));
+            }
+            // 奥(上)から手前(下)の順に重ねる。
+            found.Sort((a, b) => a.Key.CompareTo(b.Key));
+            foreach (var pair in found) sprites.Add(pair.Value);
+        }
+        private void AddFlags(List<SpriteDraw> sprites, List<Quad> quads, MapArt art)
+        {
+            if (snapshot == null) return;
+            foreach (var node in snapshot.Nodes.OrderBy(n => positions[n.Id].Y))
+            {
+                var frames = art.FlagFor(MapLayout.StableHash(node.Town));
+                if (frames.Length == 0)
+                { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 5, p.Y - 5, 10, 10, new Color32(210, 230, 188, 255)); continue; }
+                var at = positions[node.Id];
+                AddAnchored(sprites, at.X, at.Y + MapLayout.Tile / 2, frames[frame % frames.Length]);
+            }
+        }
+        // 同じ絵(テクスチャ)のものをまとめて1つのメッシュにする。
+        private static void FlushSprites(MeshGenerationContext context, List<SpriteDraw> draws)
+        {
+            const int batch = 12000;
+            foreach (var group in draws.GroupBy(d => d.Sprite.texture))
+            {
+                var list = group.ToList(); var texture = group.Key; float tw = texture.width, th = texture.height;
+                for (int offset = 0; offset < list.Count; offset += batch)
+                {
+                    int count = Math.Min(batch, list.Count - offset); var mesh = context.Allocate(count * 4, count * 6, texture);
+                    for (int i = 0; i < count; i++)
+                    {
+                        var d = list[offset + i]; var t = d.Sprite.textureRect;
+                        float u0 = t.xMin / tw, u1 = t.xMax / tw, v0 = t.yMin / th, v1 = t.yMax / th;
+                        Color32 white = new Color32(255, 255, 255, 255);
+                        mesh.SetNextVertex(new Vertex { position = new Vector3(d.Rect.xMin, d.Rect.yMin, Vertex.nearZ), uv = new Vector2(u0, v1), tint = white });
+                        mesh.SetNextVertex(new Vertex { position = new Vector3(d.Rect.xMax, d.Rect.yMin, Vertex.nearZ), uv = new Vector2(u1, v1), tint = white });
+                        mesh.SetNextVertex(new Vertex { position = new Vector3(d.Rect.xMax, d.Rect.yMax, Vertex.nearZ), uv = new Vector2(u1, v0), tint = white });
+                        mesh.SetNextVertex(new Vertex { position = new Vector3(d.Rect.xMin, d.Rect.yMax, Vertex.nearZ), uv = new Vector2(u0, v0), tint = white });
+                        ushort start = (ushort)(i * 4);
+                        mesh.SetNextIndex(start); mesh.SetNextIndex((ushort)(start + 1)); mesh.SetNextIndex((ushort)(start + 2));
+                        mesh.SetNextIndex((ushort)(start + 2)); mesh.SetNextIndex((ushort)(start + 3)); mesh.SetNextIndex(start);
+                    }
+                }
+            }
         }
         private static void Flush(MeshGenerationContext context, List<Quad> quads)
         {

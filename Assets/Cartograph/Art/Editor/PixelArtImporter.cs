@@ -9,11 +9,13 @@ namespace Cartograph.Art.Editor
     public class PixelArtImporter : AssetPostprocessor
     {
         const string Root = "Assets/Cartograph/Art/";
+        // 地図の描画が実行時に読む素材の複製(Resources.Load で読むため)。
+        const string MapArtRoot = "Assets/Cartograph/MapUI/Resources/MapArt/";
         static readonly string[] Folders = { "Buildings/", "Nature/", "Flowers/", "Flags/", "Tiles/" };
         const int PixelsPerUnit = 32;
 
         // 設定を変えたときは番号を上げる。上げると、既に取り込み済みの素材も取り込み直される。
-        public override uint GetVersion() => 1;
+        public override uint GetVersion() => 2;
 
         void OnPreprocessTexture()
         {
@@ -44,7 +46,9 @@ namespace Cartograph.Art.Editor
 
         static bool IsTarget(string path)
         {
-            if (!path.StartsWith(Root) || !path.EndsWith(".png")) return false;
+            if (!path.EndsWith(".png")) return false;
+            if (path.StartsWith(MapArtRoot)) return true;
+            if (!path.StartsWith(Root)) return false;
             var rest = path.Substring(Root.Length);
             foreach (var folder in Folders) if (rest.StartsWith(folder)) return true;
             return false;
