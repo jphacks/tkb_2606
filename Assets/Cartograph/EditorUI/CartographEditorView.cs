@@ -47,6 +47,11 @@ namespace Cartograph.EditorUI
         private System.Threading.SynchronizationContext uiContext;
         private int uiThread;
         public event Action<MapRequest> MapRefreshRequested;
+        private VisualElement writingArea, relatedBar;
+        private Label emptyNoteMessage;
+        private DropdownField relatedNote;
+        private Button addRelated;
+        private string relatedSignature;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -143,7 +148,6 @@ namespace Cartograph.EditorUI
             workbench.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
             sidebar.Add(projectLabel);
-            var sectionLabel = new Label("町とノート"); sectionLabel.AddToClassList("section-label"); sidebar.Add(sectionLabel);
             newNoteButton = Button(sidebar, "＋ 新しいノート", () => Run(async () =>
             {
                 await CreateEditableNote();
@@ -175,16 +179,45 @@ namespace Cartograph.EditorUI
             }));
             Button(deleteConfirmation, "キャンセル", () => { deleteId = null; deleteConfirmation.style.display = DisplayStyle.None; });
             sidebar.Add(deleteConfirmation);
+            var renamePanel = new VisualElement(); renamePanel.style.display = DisplayStyle.None;
+            renamePanel.Add(new Label("ノートの名前"));
+            var renameInput = new TextField(); renamePanel.Add(renameInput);
+            string renameId = null; object renameTree = null;
+            Button(renamePanel, "変更する", () => Run(async () =>
+            {
+                if (workspace is ProjectEditorWorkspace target && renameId != null)
+                {
+                    if (!ReferenceEquals(renameTree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
+                    var oldId = renameId;
+                    await target.RenameDocument(oldId, renameInput.value);
+                    if (secondaryPane.DocumentId == oldId) secondaryPane.Hide();
+                    undoHistories.Remove(oldId); ResetMapContext();
+                    renamePanel.style.display = DisplayStyle.None; renameId = null;
+                }
+            }));
+            Button(renamePanel, "キャンセル", () => { renameId = null; renamePanel.style.display = DisplayStyle.None; });
+            sidebar.Add(renamePanel);
             var scroll = new ScrollView(); scroll.style.flexGrow = 1;
             sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
             noteTree.DeleteRequested += requestDelete;
+            noteTree.RenameRequested += id =>
+            {
+                var record = workspace.Documents.FirstOrDefault(d => d.id == id); if (record == null) return;
+                renameId = id; renameTree = (workspace as IReviewingEditorWorkspace)?.Tree;
+                renameInput.SetValueWithoutNotify(record.title); renamePanel.style.display = DisplayStyle.Flex;
+                renameInput.Focus(); renameInput.SelectAll();
+            };
             noteTree.NoteSelected += id => Run(async () =>
             { await workspace.FlushSave(); await workspace.OpenDocument(id); });
 
             var editors = Row(workbench); editors.style.flexGrow = 1; editors.style.minWidth = 0;
             editors.style.flexDirection = FlexDirection.Column;
             var paper = new VisualElement();
+            writingArea = paper;
+            emptyNoteMessage = new Label("まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。");
+            emptyNoteMessage.style.whiteSpace = WhiteSpace.Normal; emptyNoteMessage.style.marginTop = 24;
+            emptyNoteMessage.style.marginLeft = 16; editors.Add(emptyNoteMessage);
             paper.AddToClassList("editor-sheet");
             paper.style.flexGrow = 1; paper.style.flexBasis = 0; paper.style.minWidth = 200;
             paper.style.paddingLeft = 8; paper.style.paddingRight = 8;
@@ -213,6 +246,18 @@ namespace Cartograph.EditorUI
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
             Button(toolbar, "分割して開く", () => OpenNoteBeside(activeId, 1));
+            relatedBar = Row(paper); relatedBar.AddToClassList("related-notes");
+            relatedBar.Add(new Label("関連ノート"));
+            relatedNote = new DropdownField(); relatedNote.style.flexGrow = 1; relatedNote.style.minWidth = 0;
+            relatedNote.tooltip = "つなぎたいノートを選び、リンクを追加してください。"; relatedBar.Add(relatedNote);
+            addRelated = Button(relatedBar, "リンクを追加", () => Run(() =>
+            {
+                var edit = RelatedNoteLink.Insert(body.value, body.cursorIndex, activeId, relatedNote.value,
+                    workspace.Documents.Select(d => d.id));
+                SetBody(edit.Text, edit.Cursor, edit.Cursor);
+                body.schedule.Execute(() => body.Focus()); return Task.CompletedTask;
+            }));
+            addRelated.tooltip = "今の段落と相手のノートを、地図上の線でつなぎます。";
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None;
             pasteNotice.style.color = (Color)new Color32(255, 170, 133, 255);
             paper.Add(pasteNotice);
@@ -224,7 +269,7 @@ namespace Cartograph.EditorUI
             reviewed = new ReviewedTextBinding(body, () => Composing, ShowReviewNotice);
             count = new Label(); count.AddToClassList("muted"); count.style.fontSize = 11; count.style.marginTop = 3; paper.Add(count);
             message = new Label(); message.style.whiteSpace = WhiteSpace.Normal;
-            message.style.color = (Color)new Color32(255, 170, 133, 255); paper.Add(message);
+            message.style.color = (Color)new Color32(255, 170, 133, 255); noteHeader.Add(message);
             secondaryPane = new SecondaryNotePane(() => Composing,
                 (id, revision, text, origin) => ((ISecondaryNoteEditor)workspace).ApplySecondaryEdit(id, revision, text, origin),
                 () => secondaryPane.Hide());
@@ -327,6 +372,12 @@ namespace Cartograph.EditorUI
         private void Refresh()
         {
             var current = workspace.Current;
+            title.style.display = current == null ? DisplayStyle.None : DisplayStyle.Flex;
+            writingArea.style.display = current == null ? DisplayStyle.None : DisplayStyle.Flex;
+            emptyNoteMessage.style.display = current == null ? DisplayStyle.Flex : DisplayStyle.None;
+            bool projectOpen = !(workspace is IReviewingEditorWorkspace project) || project.Tree != null;
+            emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
+                "まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。";
             newNoteButton.SetEnabled(true);
             newNoteButton.text = workspace is IReviewingEditorWorkspace target && target.Tree == null ? "保存先を選んで書く" : "＋ 新しいノート";
             body.tooltip = current == null ? "保存先を選び、ノートを作成すると入力できます。" : "本文を入力";
@@ -354,6 +405,16 @@ namespace Cartograph.EditorUI
                 undoHistories[activeId] = new TextUndoHistory(submittedBody);
             }
             var documents = workspace.Documents;
+            var relatedIds = documents.Where(d => d.id != current?.id).Select(d => d.id).OrderBy(id => id, StringComparer.Ordinal).ToList();
+            var nextRelatedSignature = string.Join("|", relatedIds.Select(id => id.Length + ":" + id));
+            if (relatedSignature != nextRelatedSignature)
+            {
+                relatedSignature = nextRelatedSignature;
+                var selected = relatedNote.value; relatedNote.choices = relatedIds;
+                relatedNote.SetValueWithoutNotify(relatedIds.Contains(selected) ? selected : relatedIds.FirstOrDefault() ?? "関連づけるノートがありません");
+            }
+            relatedNote.SetEnabled(current != null && relatedIds.Count > 0);
+            addRelated.SetEnabled(current != null && relatedIds.Count > 0);
             QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
             secondaryPane.SetReviewWorkspace(workspace as IReviewingEditorWorkspace);
@@ -364,7 +425,7 @@ namespace Cartograph.EditorUI
             projectLabel.text = navigation?.ProjectName ?? "ノート";
             var selectedEntry = entries.FirstOrDefault(e => e.DocumentId == activeId);
             breadcrumb.text = selectedEntry == null ? "notes" : "notes / " + selectedEntry.RelativePath.Replace("/", " / ");
-            var signature = new StringBuilder(activeId);
+            var signature = new StringBuilder(activeId).Append(projectOpen ? "|open" : "|closed");
             var folderPaths = workspace is IReviewingEditorWorkspace reviewing ? FolderPaths(reviewing.Tree).ToArray() : Array.Empty<string>();
             foreach (var folder in folderPaths) signature.Append("|folder:").Append(folder.Length).Append(':').Append(folder);
             foreach (var item in entries) signature.Append('|').Append(item.DocumentId.Length).Append(':').Append(item.DocumentId)
@@ -373,7 +434,8 @@ namespace Cartograph.EditorUI
             // Body edits/save notifications must not reconstruct the entire file list.
             if (listSignature != signature.ToString())
             {
-                noteTree.Render(NoteTree.Build(entries, folderPaths), activeId);
+                noteTree.Render(NoteTree.Build(entries, folderPaths), activeId,
+                    projectOpen ? "ノートはまだありません" : "まだノートが開かれていません");
                 listSignature = signature.ToString();
             }
             UpdateSaveStatus();
@@ -431,6 +493,7 @@ namespace Cartograph.EditorUI
                 if (string.IsNullOrWhiteSpace(projectPath.value))
                     throw new InvalidOperationException("上のプロジェクト欄に保存先フォルダを入力してください。");
                 await OpenProjectFolder();
+                if (workspace.Current == null) await workspace.CreateDocument();
             }
             else { await workspace.FlushSave(); await workspace.CreateDocument(); }
             body.schedule.Execute(() => { body.Focus(); body.SelectRange(0, 0); });
@@ -441,7 +504,6 @@ namespace Cartograph.EditorUI
             var target = workspace as IReviewingEditorWorkspace;
             if (target == null) throw new InvalidOperationException("デモを終了して通常モードで起動してください。");
             await target.OpenProject(projectPath.value);
-            if (workspace.Current == null) await workspace.CreateDocument();
             reviewed.Bind(null, null);
             secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
             ResetMapContext();

@@ -10,11 +10,12 @@ namespace Cartograph.EditorUI
         private readonly Dictionary<string, bool> expanded = new Dictionary<string, bool>();
         public event Action<string> NoteSelected;
         public event Action<string> DeleteRequested;
+        public event Action<string> RenameRequested;
 
-        public void Render(NoteTreeNode root, string activeDocumentId)
+        public void Render(NoteTreeNode root, string activeDocumentId, string emptyMessage = "ノートはまだありません")
         {
             Clear();
-            if (root.Children.Count == 0) Add(new Label("ノートはまだありません"));
+            if (root.Children.Count == 0) Add(new Label(emptyMessage));
             foreach (var node in root.Children) AddNode(this, node, activeDocumentId);
         }
 
@@ -47,6 +48,7 @@ namespace Cartograph.EditorUI
                 var menu = new VisualElement(); menu.style.display = DisplayStyle.None;
                 menu.AddToClassList("note-mini-menu");
                 menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; NoteSelected?.Invoke(note.DocumentId); }) { text = "開く" });
+                menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; RenameRequested?.Invoke(note.DocumentId); }) { text = "名前を変更…" });
                 menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; DeleteRequested?.Invoke(note.DocumentId); }) { text = "削除…" });
                 menu.Add(new Button(() => menu.style.display = DisplayStyle.None) { text = "閉じる" });
                 var more = new Button(() => menu.style.display = menu.style.display.value == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None)

@@ -151,3 +151,7 @@
 .cartowords .sidebar .section-label { margin-top: 4px; margin-bottom: 4px; }
 .cartowords .note-mini-menu { background-color: rgb(34, 43, 58); border-width: 1px; border-color: rgb(76, 100, 119); border-radius: 5px; padding: 4px; margin-bottom: 5px; }
 .cartowords .note-mini-menu .unity-button { -unity-text-align: middle-left; }
+.cartowords .related-notes { align-items: center; flex-shrink: 0; margin-bottom: 5px; }
+.cartowords .related-notes .unity-label { font-size: 11px; margin-right: 5px; }
+.cartowords .related-notes .unity-base-popup-field__input { padding: 3px 6px; font-size: 11px; }
+.cartowords .related-notes .unity-button { font-size: 11px; padding: 3px 7px; }
