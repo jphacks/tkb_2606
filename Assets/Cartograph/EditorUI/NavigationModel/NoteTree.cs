@@ -46,10 +46,48 @@ namespace Cartograph.EditorUI.Navigation
             children.Sort((a, b) =>
             {
                 if (a.IsFolder != b.IsFolder) return a.IsFolder ? -1 : 1;
-                return StringComparer.Ordinal.Compare(a.Name, b.Name);
+                var order = a.IsFolder ? StringComparer.Ordinal.Compare(a.Name, b.Name)
+                    : CompareNatural(NoteStem(a.Name), NoteStem(b.Name));
+                return order != 0 ? order : StringComparer.Ordinal.Compare(a.Path, b.Path);
             });
             foreach (var child in children) child.Sort();
         }
+
+        private static string NoteStem(string name) => name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)
+            ? name.Substring(0, name.Length - 3) : name;
+
+        // Compare digit runs without parsing integers: arbitrarily long suffixes remain sortable.
+        private static int CompareNatural(string left, string right)
+        {
+            int a = 0, b = 0;
+            while (a < left.Length && b < right.Length)
+            {
+                if (IsDigit(left[a]) && IsDigit(right[b]))
+                {
+                    int aEnd = a, bEnd = b;
+                    while (aEnd < left.Length && IsDigit(left[aEnd])) aEnd++;
+                    while (bEnd < right.Length && IsDigit(right[bEnd])) bEnd++;
+                    while (a < aEnd && left[a] == '0') a++;
+                    while (b < bEnd && right[b] == '0') b++;
+                    var order = (aEnd - a).CompareTo(bEnd - b);
+                    if (order != 0) return order;
+                    while (a < aEnd)
+                    {
+                        order = left[a++].CompareTo(right[b++]);
+                        if (order != 0) return order;
+                    }
+                    a = aEnd; b = bEnd;
+                }
+                else
+                {
+                    var order = left[a++].CompareTo(right[b++]);
+                    if (order != 0) return order;
+                }
+            }
+            return (left.Length - a).CompareTo(right.Length - b);
+        }
+
+        private static bool IsDigit(char c) => c >= '0' && c <= '9';
     }
 
     public static class NoteTree

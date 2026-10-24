@@ -1,5 +1,7 @@
 @import url("unity-theme://default");
 
+.cartowords:disabled { opacity: 1; }
+
 .cartowords .unity-text-element { color: rgb(229, 233, 242); }
 .cartowords .muted { color: rgb(155, 165, 185); }
 .cartowords .brand { color: rgb(76, 190, 208); -unity-font-style: bold; font-size: 19px; }

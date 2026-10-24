@@ -97,6 +97,9 @@ namespace Cartograph.EditorUI
             root.AddToClassList("cartowords");
             root.style.flexGrow = 1;
             root.style.backgroundColor = (Color)new Color32(31, 36, 50, 255);
+            // Disabled controls may fade, but the app surface must stay opaque
+            // while a project loads; otherwise the Unity camera shows through.
+            root.style.opacity = 1;
             root.style.color = (Color)new Color32(229, 233, 242, 255);
             root.style.fontSize = 16;
             // Use an installed Japanese-capable font, never a remote font/CDN.
@@ -210,7 +213,8 @@ namespace Cartograph.EditorUI
             var toolbar = Row(paper); toolbar.style.flexWrap = Wrap.Wrap;
             toolbar.AddToClassList("format-toolbar");
             toolbar.style.flexShrink = 0;
-            undoButton = Button(toolbar, "元に戻す", () => ReplayUndo(false));
+            undoButton = Button(toolbar, "↶ 戻る", () => ReplayUndo(false));
+            undoButton.tooltip = "直前の文字入力・書式変更を取り消す（Ctrl+Z）";
             redoButton = Button(toolbar, "やり直し", () => ReplayUndo(true));
             Button(toolbar, "大見出し", () => PrefixLine("# "));
             Button(toolbar, "見出し", () => PrefixLine("## "));
@@ -375,7 +379,8 @@ namespace Cartograph.EditorUI
             emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
                 "まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。";
             newNoteButton.SetEnabled(true);
-            newNoteButton.text = workspace is IReviewingEditorWorkspace target && target.Tree == null ? "保存先を選んで書く" : "＋ 新しいノート";
+            newNoteButton.style.display = projectOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            newNoteButton.text = "＋ 新しいノート";
             body.tooltip = current == null ? "保存先を選び、ノートを作成すると入力できます。" : "本文を入力";
             title.isReadOnly = body.isReadOnly = current == null;
             if (current == null)
@@ -596,6 +601,7 @@ namespace Cartograph.EditorUI
 
         private void ResetMapContext()
         {
+            rich?.ResetHistory(); secondaryPane?.ResetHistory();
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
             displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());

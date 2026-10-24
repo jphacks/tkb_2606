@@ -25,6 +25,8 @@ namespace Cartograph.EditorUI
         private IReviewedNoteAccess access;
         private string id, raw = "";
         private TextUndoHistory history;
+        private readonly NoteUndoHistoryCache noteHistories = new NoteUndoHistoryCache();
+        private IReviewingEditorWorkspace historySource;
         private bool processing, replaying;
         private int cursor, selection;
         private int pointerGeneration;
@@ -34,6 +36,12 @@ namespace Cartograph.EditorUI
         public bool CanUndo => Enabled && history != null && history.CanUndo;
         public bool CanRedo => Enabled && history != null && history.CanRedo;
         public bool HasPending => rows.Any(row => row.Binding.HasPending);
+
+        /// <summary>Call on project open/close and identifier-changing operations.</summary>
+        public void ResetHistory()
+        {
+            noteHistories.Clear(); history = null; id = null;
+        }
 
         public RichNoteEditor(Func<bool> composing, Action<string> notice)
         {
@@ -71,14 +79,19 @@ namespace Cartograph.EditorUI
                 this.source = source; access = null; id = null; raw = "";
                 rows.Clear(); scroll.Clear(); SetEnabled(false); return;
             }
-            bool switched = id != document.id || !ReferenceEquals(this.source, source);
+            if (!ReferenceEquals(historySource, source))
+            {
+                noteHistories.Clear(); history = null; historySource = source;
+            }
+            bool switched = id != document.id || !ReferenceEquals(this.source, source) || history == null;
             this.source = source; access = (IReviewedNoteAccess)source; id = document.id;
             SetEnabled(true);
             if (!switched && HasPending) return;
             if (switched)
             {
                 raw = document.markdown ?? "";
-                history = new TextUndoHistory(raw, metadata: access.GetLabeledDocument(id)); cursor = selection = 0;
+                history = noteHistories.GetOrCreate(id, raw, access.GetLabeledDocument(id));
+                cursor = history.Current.Cursor; selection = history.Current.Selection;
             }
             else if (raw != (document.markdown ?? "") && HasFocus())
             {

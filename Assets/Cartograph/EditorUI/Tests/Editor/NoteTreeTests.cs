@@ -7,6 +7,37 @@ namespace Cartograph.EditorUI.Tests
     public sealed class NoteTreeTests
     {
         [Test]
+        public void NoteNamesSortBaseThenNumericSuffixInsideEveryFolder()
+        {
+            var root = NoteTree.Build(new[] {
+                new NoteTreeEntry("ten", "無題のノート 10.md", "無題のノート 10"),
+                new NoteTreeEntry("two", "無題のノート 2.md", "無題のノート 2"),
+                new NoteTreeEntry("base", "無題のノート.md", "無題のノート"),
+                new NoteTreeEntry("nested-ten", "z/ノート10.md", "ノート10"),
+                new NoteTreeEntry("nested-base", "z/ノート.md", "ノート"),
+                new NoteTreeEntry("nested-two", "z/ノート2.md", "ノート2") });
+            Assert.That(root.Children[0].IsFolder, Is.True);
+            Assert.That(root.Children[1].Note.DocumentId, Is.EqualTo("base"));
+            Assert.That(root.Children[2].Note.DocumentId, Is.EqualTo("two"));
+            Assert.That(root.Children[3].Note.DocumentId, Is.EqualTo("ten"));
+            Assert.That(root.Children[0].Children[0].Note.DocumentId, Is.EqualTo("nested-base"));
+            Assert.That(root.Children[0].Children[1].Note.DocumentId, Is.EqualTo("nested-two"));
+            Assert.That(root.Children[0].Children[2].Note.DocumentId, Is.EqualTo("nested-ten"));
+        }
+
+        [Test]
+        public void NumericNameTiesUseStableOrdinalPathAndDoNotOverflow()
+        {
+            var root = NoteTree.Build(new[] {
+                new NoteTreeEntry("large", "note999999999999999999999999999.md", ""),
+                new NoteTreeEntry("two", "note2.md", ""),
+                new NoteTreeEntry("zero-two", "note02.md", "") });
+            Assert.That(root.Children[0].Note.DocumentId, Is.EqualTo("zero-two"));
+            Assert.That(root.Children[1].Note.DocumentId, Is.EqualTo("two"));
+            Assert.That(root.Children[2].Note.DocumentId, Is.EqualTo("large"));
+        }
+
+        [Test]
         public void EmptyTownsAndNestedEmptyTownsAreVisible()
         {
             var root = NoteTree.Build(Array.Empty<NoteTreeEntry>(), new[] { "大学/授業/科目A" });
