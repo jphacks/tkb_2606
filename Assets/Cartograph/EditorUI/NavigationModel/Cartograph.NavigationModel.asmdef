@@ -1,0 +1,7 @@
+{
+  "name": "Cartograph.NavigationModel",
+  "rootNamespace": "Cartograph.EditorUI.Navigation",
+  "references": [],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}
