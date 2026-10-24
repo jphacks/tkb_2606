@@ -83,7 +83,8 @@ namespace Cartowords.MapPresentation
     }
     public static class MapLayout
     {
-        public const float Tile = 20;
+        public const float Tile = 32;
+        const float Spread = Tile / 20; // 1マスが大きくなった分、拠点の間隔も広げる
         public static int LandRadius(int typedChars) => typedChars <= 0 ? 0 : Math.Min(4, 1 + (int)Math.Sqrt(typedChars / 100.0));
         public static int StableHash(string text)
         {
@@ -102,11 +103,11 @@ namespace Cartowords.MapPresentation
                 index[nodes[i].Id] = i;
                 int town = Array.IndexOf(towns, nodes[i].Town);
                 double angle = town * 2 * Math.PI / Math.Max(1, towns.Length);
-                float distance = nodes[i].Isolated ? 620 : towns.Length > 1 ? 280 : 0;
+                float distance = (nodes[i].Isolated ? 620 : towns.Length > 1 ? 280 : 0) * Spread;
                 ax[i] = (float)Math.Cos(angle) * distance; ay[i] = (float)Math.Sin(angle) * distance;
                 double seed = StableHash(nodes[i].Id) * 0.001;
-                x[i] = ax[i] + (float)Math.Cos(seed) * (80 + i % 7 * 24);
-                y[i] = ay[i] + (float)Math.Sin(seed) * (80 + i % 11 * 18);
+                x[i] = ax[i] + (float)Math.Cos(seed) * (80 + i % 7 * 24) * Spread;
+                y[i] = ay[i] + (float)Math.Sin(seed) * (80 + i % 11 * 18) * Spread;
                 if (previous != null && previous.TryGetValue(nodes[i].Id, out var point))
                 { x[i] = point.X; y[i] = point.Y; pinned[i] = true; }
             }
@@ -131,7 +132,7 @@ namespace Cartowords.MapPresentation
                     int a = index[edge.From], b = index[edge.To];
                     float vx = x[b] - x[a], vy = y[b] - y[a];
                     float distance = (float)Math.Sqrt(vx * vx + vy * vy + 1);
-                    float pull = (distance - 155) * 0.025f / distance;
+                    float pull = (distance - 155 * Spread) * 0.025f / distance;
                     dx[a] += vx * pull; dy[a] += vy * pull; dx[b] -= vx * pull; dy[b] -= vy * pull;
                 }
                 for (int i = 0; i < count; i++)
