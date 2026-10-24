@@ -12,6 +12,9 @@ namespace Cartograph.Art.Editor
         static readonly string[] Folders = { "Buildings/", "Nature/", "Flowers/", "Flags/", "Tiles/" };
         const int PixelsPerUnit = 32;
 
+        // 設定を変えたときは番号を上げる。上げると、既に取り込み済みの素材も取り込み直される。
+        public override uint GetVersion() => 1;
+
         void OnPreprocessTexture()
         {
             if (!IsTarget(assetPath)) return;
