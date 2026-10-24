@@ -1,0 +1,7 @@
+{
+  "name": "Cartograph.EditorUndo",
+  "rootNamespace": "Cartograph.EditorUI",
+  "references": [],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}
