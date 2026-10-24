@@ -47,11 +47,11 @@ namespace Cartograph.EditorUI
         private System.Threading.SynchronizationContext uiContext;
         private int uiThread;
         public event Action<MapRequest> MapRefreshRequested;
-        private VisualElement writingArea, relatedBar;
+        private VisualElement writingArea;
         private Label emptyNoteMessage;
-        private DropdownField relatedNote;
-        private Button addRelated;
-        private string relatedSignature;
+        private RelatedNotesControl relatedControl;
+        private NoteActionDialog noteDialog;
+        private RichNoteEditor rich;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -146,61 +146,33 @@ namespace Cartograph.EditorUI
             {
                 await CreateEditableNote();
             })); newNoteButton.AddToClassList("primary-action");
-            var deleteConfirmation = new VisualElement(); deleteConfirmation.style.display = DisplayStyle.None;
-            var deleteLabel = new Label(); deleteLabel.style.whiteSpace = WhiteSpace.Normal;
-            string deleteId = null;
-            object deleteTree = null;
-            Action<string> requestDelete = id =>
-            {
-                var record = workspace.Documents.FirstOrDefault(d => d.id == id);
-                if (record == null) return;
-                deleteId = id; deleteLabel.text = "「" + record.title + "」を削除しますか？";
-                deleteTree = (workspace as IReviewingEditorWorkspace)?.Tree;
-                deleteConfirmation.style.display = DisplayStyle.Flex;
-            };
-            deleteConfirmation.Add(deleteLabel);
-            Button(deleteConfirmation, "削除する", () => Run(async () =>
-            {
-                if (workspace is ProjectEditorWorkspace target && deleteId != null)
-                {
-                    if (!ReferenceEquals(deleteTree, target.Tree))
-                        throw new InvalidOperationException("プロジェクトが変わりました。削除するノートを選び直してください。");
-                    await target.DeleteDocument(deleteId);
-                    if (secondaryPane.DocumentId == deleteId) secondaryPane.Hide();
-                    undoHistories.Remove(deleteId); ResetMapContext();
-                }
-                deleteConfirmation.style.display = DisplayStyle.None; deleteId = null;
-            }));
-            Button(deleteConfirmation, "キャンセル", () => { deleteId = null; deleteConfirmation.style.display = DisplayStyle.None; });
-            sidebar.Add(deleteConfirmation);
-            var renamePanel = new VisualElement(); renamePanel.style.display = DisplayStyle.None;
-            renamePanel.Add(new Label("ノートの名前"));
-            var renameInput = new TextField(); renamePanel.Add(renameInput);
-            string renameId = null; object renameTree = null;
-            Button(renamePanel, "変更する", () => Run(async () =>
-            {
-                if (workspace is ProjectEditorWorkspace target && renameId != null)
-                {
-                    if (!ReferenceEquals(renameTree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
-                    var oldId = renameId;
-                    await target.RenameDocument(oldId, renameInput.value);
-                    if (secondaryPane.DocumentId == oldId) secondaryPane.Hide();
-                    undoHistories.Remove(oldId); ResetMapContext();
-                    renamePanel.style.display = DisplayStyle.None; renameId = null;
-                }
-            }));
-            Button(renamePanel, "キャンセル", () => { renameId = null; renamePanel.style.display = DisplayStyle.None; });
-            sidebar.Add(renamePanel);
-            var scroll = new ScrollView(); scroll.style.flexGrow = 1;
-            sidebar.Add(scroll);
+            var scroll = new ScrollView(); scroll.style.flexGrow = 1; sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
-            noteTree.DeleteRequested += requestDelete;
+            noteTree.DeleteRequested += id =>
+            {
+                var record = workspace.Documents.FirstOrDefault(d => d.id == id); if (record == null) return;
+                var target = workspace as ProjectEditorWorkspace; if (target == null) return;
+                var tree = target.Tree;
+                noteDialog.ShowDelete(record.title, () => Execute(async () =>
+                {
+                    if (!ReferenceEquals(tree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
+                    await target.DeleteDocument(id);
+                    if (secondaryPane.DocumentId == id) secondaryPane.Hide();
+                    undoHistories.Remove(id); ResetMapContext();
+                }));
+            };
             noteTree.RenameRequested += id =>
             {
                 var record = workspace.Documents.FirstOrDefault(d => d.id == id); if (record == null) return;
-                renameId = id; renameTree = (workspace as IReviewingEditorWorkspace)?.Tree;
-                renameInput.SetValueWithoutNotify(record.title); renamePanel.style.display = DisplayStyle.Flex;
-                renameInput.Focus(); renameInput.SelectAll();
+                var target = workspace as ProjectEditorWorkspace; if (target == null) return;
+                var tree = target.Tree;
+                noteDialog.ShowRename(record.title, name => Execute(async () =>
+                {
+                    if (!ReferenceEquals(tree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
+                    await target.RenameDocument(id, name);
+                    if (secondaryPane.DocumentId == id) secondaryPane.Hide();
+                    undoHistories.Remove(id); ResetMapContext();
+                }));
             };
             noteTree.NoteSelected += id => Run(async () =>
             { await workspace.FlushSave(); await workspace.OpenDocument(id); });
@@ -234,24 +206,20 @@ namespace Cartograph.EditorUI
             Button(toolbar, "大見出し", () => PrefixLine("# "));
             Button(toolbar, "見出し", () => PrefixLine("## "));
             Button(toolbar, "小見出し", () => PrefixLine("### "));
+            Button(toolbar, "本文", () => PrefixLine(""));
             Button(toolbar, "太字", () => WrapSelection("**"));
             Button(toolbar, "斜体", () => WrapSelection("*"));
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
             Button(toolbar, "分割して開く", () => OpenNoteBeside(activeId, 1));
-            relatedBar = Row(paper); relatedBar.AddToClassList("related-notes");
-            relatedBar.Add(new Label("関連ノート"));
-            relatedNote = new DropdownField(); relatedNote.style.flexGrow = 1; relatedNote.style.minWidth = 0;
-            relatedNote.tooltip = "つなぎたいノートを選び、リンクを追加してください。"; relatedBar.Add(relatedNote);
-            addRelated = Button(relatedBar, "線でつなぐ", () => Run(() =>
+            relatedControl = new RelatedNotesControl(); paper.Add(relatedControl);
+            relatedControl.Requested += targetId => Run(() =>
             {
-                var edit = RelatedNoteLink.Insert(body.value, body.cursorIndex, activeId, relatedNote.value,
+                var edit = RelatedNoteLink.Insert(body.value, body.cursorIndex, activeId, targetId,
                     workspace.Documents.Select(d => d.id));
-                SetBody(edit.Text, edit.Cursor, edit.Cursor);
-                body.schedule.Execute(() => body.Focus()); return Task.CompletedTask;
-            }));
-            addRelated.tooltip = "今の段落と相手のノートを、地図上の線でつなぎます。";
+                SetBody(edit.Text, edit.Cursor, edit.Cursor); return Task.CompletedTask;
+            });
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None;
             pasteNotice.style.color = (Color)new Color32(255, 170, 133, 255);
             paper.Add(pasteNotice);
@@ -261,6 +229,12 @@ namespace Cartograph.EditorUI
             body.verticalScrollerVisibility = ScrollerVisibility.Auto;
             paper.Add(body);
             reviewed = new ReviewedTextBinding(body, () => Composing, ShowReviewNotice);
+            rich = new RichNoteEditor(() => Composing, ShowReviewNotice); paper.Add(rich);
+            rich.Changed += (raw, cursor, selection) =>
+            {
+                body.SetValueWithoutNotify(raw); body.SelectRange(cursor, selection);
+                submittedBody = raw; UpdateCount();
+            };
             count = new Label(); count.AddToClassList("muted"); count.style.fontSize = 11; count.style.marginTop = 3; paper.Add(count);
             message = new Label(); message.style.whiteSpace = WhiteSpace.Normal;
             message.style.color = (Color)new Color32(255, 170, 133, 255); noteHeader.Add(message);
@@ -287,6 +261,7 @@ namespace Cartograph.EditorUI
                 if (!undo && !redo) return;
                 evt.StopImmediatePropagation(); ReplayUndo(redo);
             }, TrickleDown.TrickleDown);
+            noteDialog = new NoteActionDialog(); root.Add(noteDialog);
             if (workspace == null) Bind(new ProjectEditorWorkspace());
             else Refresh();
 #if ENABLE_INPUT_SYSTEM
@@ -309,9 +284,9 @@ namespace Cartograph.EditorUI
         private void OnComposition(IMECompositionString value)
         {
             composing = value.Count > 0;
-            reviewed?.CompositionChanged(composing); secondaryPane?.CompositionChanged(composing);
+            reviewed?.CompositionChanged(composing); rich?.CompositionChanged(composing); secondaryPane?.CompositionChanged(composing);
         }
-        private void OnTextInput(char value) { reviewed?.TextInput(value); secondaryPane?.TextInput(value); }
+        private void OnTextInput(char value) { reviewed?.TextInput(value); rich?.TextInput(value); secondaryPane?.TextInput(value); }
         private void TrackKeyboard()
         {
             if (imeKeyboard == Keyboard.current) return;
@@ -328,7 +303,8 @@ namespace Cartograph.EditorUI
 #endif
             if (root == null || workspace == null || busy || Composing) return;
             // The frame after IME confirmation also submits the final value.
-            if (reviewed.Enabled) reviewed.Tick();
+            if (rich.Enabled) rich.Tick();
+            else if (reviewed.Enabled) reviewed.Tick();
             else { SubmitTitle(); SubmitBody(ChangeOrigin.Typing); }
             secondaryPane.Tick();
             UpdateSaveStatus(); UpdateUndoButtons();
@@ -348,6 +324,7 @@ namespace Cartograph.EditorUI
 
         private bool SubmitBody(ChangeOrigin origin)
         {
+            if (origin == ChangeOrigin.Typing && rich != null && rich.Enabled) return rich.Submit(origin);
             if (reviewed.Enabled)
             {
                 bool result = reviewed.Submit(origin);
@@ -404,18 +381,12 @@ namespace Cartograph.EditorUI
                 undoHistories[activeId] = new TextUndoHistory(submittedBody);
             }
             var documents = workspace.Documents;
-            var relatedIds = documents.Where(d => d.id != current?.id).Select(d => d.id).OrderBy(id => id, StringComparer.Ordinal).ToList();
-            var nextRelatedSignature = string.Join("|", relatedIds.Select(id => id.Length + ":" + id));
-            if (relatedSignature != nextRelatedSignature)
-            {
-                relatedSignature = nextRelatedSignature;
-                var selected = relatedNote.value; relatedNote.choices = relatedIds;
-                relatedNote.SetValueWithoutNotify(relatedIds.Contains(selected) ? selected : relatedIds.FirstOrDefault() ?? "関連づけるノートがありません");
-            }
-            relatedNote.SetEnabled(current != null && relatedIds.Count > 0);
-            addRelated.SetEnabled(current != null && relatedIds.Count > 0);
+            relatedControl.SetNotes(current?.id, documents);
             QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
+            rich.Bind(workspace as IReviewingEditorWorkspace, current);
+            rich.style.display = rich.Enabled ? DisplayStyle.Flex : DisplayStyle.None;
+            body.style.display = rich.Enabled ? DisplayStyle.None : DisplayStyle.Flex;
             secondaryPane.SetReviewWorkspace(workspace as IReviewingEditorWorkspace);
             if (secondaryPane.DocumentId != null)
                 secondaryPane.Refresh(documents.FirstOrDefault(d => d.id == secondaryPane.DocumentId));
@@ -445,12 +416,18 @@ namespace Cartograph.EditorUI
         private async void Run(Func<Task> action)
         {
             if (busy) return;
-            if (Composing) { message.text = "日本語変換を確定してから操作してください。"; return; }
+            try { await Execute(action); }
+            catch (Exception ex) { if (this != null) { Refresh(); message.text = "操作に失敗しました：" + ex.Message; } }
+        }
+        private async Task Execute(Func<Task> action)
+        {
+            if (busy) throw new InvalidOperationException("処理が終わるまでお待ちください。");
+            if (Composing) throw new InvalidOperationException("日本語変換を確定してから操作してください。");
             busy = true; root.SetEnabled(false);
             try
             {
                 if (!SubmitBody(ChangeOrigin.Typing) || !secondaryPane.Submit(ChangeOrigin.Typing))
-                { message.text = "入力内容の確認で操作を止めました。表示された案内を確認して、もう一度操作してください。"; return; }
+                    throw new InvalidOperationException("入力内容の案内を確認して、もう一度操作してください。");
                 if (workspace is IReviewedNoteAccess access && activeId != null && title.value != submittedTitle)
                 {
                     var oldId = activeId;
@@ -459,12 +436,8 @@ namespace Cartograph.EditorUI
                     if (secondaryPane.DocumentId == oldId)
                         secondaryPane.Open(workspace.Current, 1, true);
                 }
-                else if (!SubmitTitle()) return;
+                else if (!SubmitTitle()) throw new InvalidOperationException("ノート名を確認してください。");
                 await action(); Refresh();
-            }
-            catch (Exception ex)
-            {
-                if (this != null) { Refresh(); message.text = "操作に失敗しました：" + ex.Message; }
             }
             finally { busy = false; if (this != null) root.SetEnabled(true); }
         }
@@ -500,7 +473,7 @@ namespace Cartograph.EditorUI
                 if (workspace.Current == null) await workspace.CreateDocument();
             }
             else { await workspace.FlushSave(); await workspace.CreateDocument(); }
-            body.schedule.Execute(() => { body.Focus(); body.SelectRange(0, 0); });
+            body.schedule.Execute(() => { if (rich.Enabled) rich.FocusRaw(0, 0); else { body.Focus(); body.SelectRange(0, 0); } });
         }
 
         private async Task OpenProjectFolder()
@@ -603,6 +576,7 @@ namespace Cartograph.EditorUI
         private void WrapSelection(string marker)
         {
             if (Composing) return;
+            if (rich.Enabled && !rich.Submit(ChangeOrigin.Typing)) return;
             var text = body.value ?? "";
             var start = Mathf.Clamp(Math.Min(body.cursorIndex, body.selectIndex), 0, text.Length);
             var end = Mathf.Clamp(Math.Max(body.cursorIndex, body.selectIndex), start, text.Length);
@@ -614,17 +588,27 @@ namespace Cartograph.EditorUI
         private void PrefixLine(string prefix)
         {
             if (Composing) return;
+            if (rich.Enabled && !rich.Submit(ChangeOrigin.Typing)) return;
             var text = body.value ?? "";
             var cursor = Mathf.Clamp(body.cursorIndex, 0, text.Length);
             var start = cursor == 0 ? 0 : text.LastIndexOf('\n', cursor - 1) + 1;
-            SetBody(text.Insert(start, prefix), cursor + prefix.Length, cursor + prefix.Length);
+            int remove = 0;
+            if (prefix.Length == 0 || prefix.StartsWith("#", StringComparison.Ordinal))
+                remove = System.Text.RegularExpressions.Regex.Match(text.Substring(start), @"^#{1,6}[ \t]+").Length;
+            var updated = text.Remove(start, remove).Insert(start, prefix);
+            int position = Math.Max(start + prefix.Length, cursor + prefix.Length - remove);
+            SetBody(updated, position, position);
         }
 
         private void SetBody(string value, int start, int end)
         {
+            if (rich.Enabled)
+            { reviewed.Bind(null, null); reviewed.Bind(workspace as IReviewingEditorWorkspace, workspace.Current); }
             body.SetValueWithoutNotify(value);
             SubmitBody(ChangeOrigin.Format); UpdateCount();
-            body.Focus(); body.SelectRange(start, end);
+            body.SelectRange(start, end);
+            if (rich.Enabled) { rich.Bind(workspace as IReviewingEditorWorkspace, workspace.Current); rich.FocusRaw(start, end); }
+            else body.Focus();
         }
 
         private void GuardClipboard(TextField field)
@@ -665,6 +649,7 @@ namespace Cartograph.EditorUI
 
         private void UpdateUndoButtons()
         {
+            if (rich != null && rich.Enabled) { undoButton.SetEnabled(rich.CanUndo); redoButton.SetEnabled(rich.CanRedo); return; }
             if (reviewed.Enabled) { undoButton.SetEnabled(reviewed.CanUndo); redoButton.SetEnabled(reviewed.CanRedo); return; }
             bool has = activeId != null && undoHistories.ContainsKey(activeId);
             undoButton.SetEnabled(has && undoHistories[activeId].CanUndo);
@@ -673,6 +658,7 @@ namespace Cartograph.EditorUI
 
         private void ReplayUndo(bool redo)
         {
+            if (rich.Enabled) { rich.Replay(redo); UpdateUndoButtons(); return; }
             if (reviewed.Enabled) { reviewed.Replay(redo); UpdateUndoButtons(); return; }
             if (busy || Composing || activeId == null || !undoHistories.TryGetValue(activeId, out var history)) return;
             if (!SubmitBody(ChangeOrigin.Typing)) return;

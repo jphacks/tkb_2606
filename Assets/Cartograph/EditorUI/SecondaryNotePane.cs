@@ -18,12 +18,13 @@ namespace Cartograph.EditorUI
         private bool editable;
         private TextUndoHistory undo;
         private readonly ReviewedTextBinding reviewed;
+        private readonly RichNoteEditor rich;
         private IReviewingEditorWorkspace reviewingWorkspace;
         public void SetReviewWorkspace(IReviewingEditorWorkspace workspace) { reviewingWorkspace = workspace; }
-        public void CompositionChanged(bool active) => reviewed.CompositionChanged(active);
-        public void TextInput(char character) => reviewed.TextInput(character);
+        public void CompositionChanged(bool active) { reviewed.CompositionChanged(active); rich.CompositionChanged(active); }
+        public void TextInput(char character) { reviewed.TextInput(character); rich.TextInput(character); }
         public string DocumentId { get; private set; }
-        public bool HasPending => reviewed.Enabled ? reviewed.HasPending : DocumentId != null && body.value != lastSubmitted;
+        public bool HasPending => rich.Enabled ? rich.HasPending : reviewed.Enabled ? reviewed.HasPending : DocumentId != null && body.value != lastSubmitted;
 
         public SecondaryNotePane(Func<bool> composing,
             Func<string, long, string, ChangeOrigin, DocumentRecord> apply, Action closed)
@@ -46,6 +47,9 @@ namespace Cartograph.EditorUI
             body.verticalScrollerVisibility = ScrollerVisibility.Auto; Add(body);
             info = new Label(); info.style.whiteSpace = WhiteSpace.Normal; Add(info);
             reviewed = new ReviewedTextBinding(body, composing, text => { info.text = text; });
+            rich = new RichNoteEditor(composing, text => { info.text = text; });
+            Insert(IndexOf(body), rich);
+            rich.Changed += (raw, cursor, selection) => { body.SetValueWithoutNotify(raw); body.SelectRange(cursor, selection); lastSubmitted = raw; };
             body.RegisterValueChangedCallback(_ => { if (!reviewed.Enabled && !composing()) Submit(ChangeOrigin.Typing); });
             body.RegisterCallback<KeyDownEvent>(evt =>
             {
@@ -82,10 +86,15 @@ namespace Cartograph.EditorUI
             body.SetValueWithoutNotify(lastSubmitted); body.isReadOnly = !editable;
             undo = new TextUndoHistory(lastSubmitted);
             reviewed.Bind(reviewingWorkspace, document);
+            rich.Bind(reviewingWorkspace, document);
+            rich.SetEnabled(editable);
+            rich.style.display = rich.Enabled ? DisplayStyle.Flex : DisplayStyle.None;
+            body.style.display = rich.Enabled ? DisplayStyle.None : DisplayStyle.Flex;
             heading.text = document.title; info.text = DefaultInfo();
             style.display = DisplayStyle.Flex;
             body.schedule.Execute(() =>
             {
+                if (rich.Enabled) { rich.FocusRaw(offset, offset); return; }
                 body.Focus(); body.SelectRange(offset, offset);
                 body.schedule.Execute(() =>
                 {
@@ -98,6 +107,7 @@ namespace Cartograph.EditorUI
 
         public void Refresh(DocumentRecord document)
         {
+            if (rich.Enabled) { rich.Bind(reviewingWorkspace, document); rich.SetEnabled(editable); if (document != null) heading.text = document.title; return; }
             if (reviewed.Enabled) { reviewed.Bind(reviewingWorkspace, document); return; }
             if (document == null || document.id != DocumentId || composing()) return;
             // Never replace a pending local change with a save-state notification.
@@ -112,6 +122,7 @@ namespace Cartograph.EditorUI
 
         public bool Submit(ChangeOrigin origin)
         {
+            if (rich.Enabled) return rich.Submit(origin);
             if (reviewed.Enabled) return reviewed.Submit(origin);
             if (DocumentId == null || body.value == lastSubmitted) return true;
             if (!editable || composing()) return false;
@@ -128,6 +139,7 @@ namespace Cartograph.EditorUI
 
         public void Tick()
         {
+            if (rich.Enabled) { rich.Tick(); return; }
             if (reviewed.Enabled) { reviewed.Tick(); return; }
             if (DocumentId == null || composing()) return;
             Submit(ChangeOrigin.Typing);
@@ -136,6 +148,7 @@ namespace Cartograph.EditorUI
 
         private void Replay(bool redo)
         {
+            if (rich.Enabled) { rich.Replay(redo); return; }
             if (reviewed.Enabled) { reviewed.Replay(redo); return; }
             if (!editable || composing() || !Submit(ChangeOrigin.Typing)) return;
             if (redo ? !undo.CanRedo : !undo.CanUndo) return;
@@ -152,6 +165,7 @@ namespace Cartograph.EditorUI
 
         public void Hide()
         {
+            rich.Bind(null, null);
             DocumentId = null; style.display = DisplayStyle.None;
             reviewed.Bind(null, null);
         }

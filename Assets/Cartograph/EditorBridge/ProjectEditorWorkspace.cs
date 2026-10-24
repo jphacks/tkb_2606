@@ -19,7 +19,7 @@ namespace Cartograph.EditorUI
 
     /// <summary>UI adapter with shared, reviewed sessions for both editor panes.</summary>
     public sealed class ProjectEditorWorkspace : IReviewingEditorWorkspace, IProjectNavigationSource,
-        ISecondaryNoteEditor, IReviewedNoteAccess
+        ISecondaryNoteEditor, IReviewedNoteAccess, IProjectedCopyAccess
     {
         private sealed class Entry
         {
@@ -140,6 +140,21 @@ namespace Cartograph.EditorUI
         public ReviewResult ReviewChange(string documentId, ChangeCandidate candidate)
         { return ReviewDocument(documentId, Require(documentId).Revision, candidate); }
         public void NotifyCopied(string documentId, int start, int length) => Require(documentId).Session.NotifyCopied(start, length);
+        public void NotifyProjectedCopied(string documentId, string visibleText, IReadOnlyList<int> sourceOffsets)
+        {
+            var original = GetLabeledDocument(documentId);
+            if (visibleText == null || sourceOffsets == null || visibleText.Length != sourceOffsets.Count)
+                throw new ArgumentException("コピー範囲が一致しません。");
+            var projected = new LabeledText();
+            for (int i = 0; i < sourceOffsets.Count; i++)
+            {
+                int at = sourceOffsets[i];
+                if (at < 0 || at >= original.Length || original.Text[at] != visibleText[i] || (i > 0 && at <= sourceOffsets[i - 1]))
+                    throw new ArgumentException("コピー位置が変更されています。");
+                projected.Insert(projected.Length, visibleText.Substring(i, 1), original.Slice(at, 1));
+            }
+            project.Clipboard.Set(documentId, sourceOffsets.Count == 0 ? 0 : sourceOffsets[0], visibleText, projected.Labels);
+        }
         public void ApplyEditorChange(string documentId, string markdown, ChangeOrigin origin)
         {
             // Never accept unreviewed typing in the production UI.
