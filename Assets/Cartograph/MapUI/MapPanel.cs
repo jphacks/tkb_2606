@@ -13,7 +13,7 @@ namespace Cartograph.MapUI
         private MapSnapshot latest;
         private bool isPreview;
         public event Action<string, int> OpenNoteRequested;
-        public event Action<Emotion, UnityEngine.Color32> FlowerColorChanged;
+
         public MapPanel()
         {
             AddToClassList("map-panel"); style.flexGrow = 1; style.minWidth = 240;
@@ -23,9 +23,6 @@ namespace Cartograph.MapUI
             toolbar.Add(new Button(() => canvas.Zoom(0.8f)) { text = "−", tooltip = "縮小" });
             toolbar.Add(new Button(canvas.Fit) { text = "全体", tooltip = "地図全体を表示" });
             toolbar.Add(new Button(canvas.FocusSelection) { text = "選択", tooltip = "選択した拠点を中央へ" });
-            var palette = new VisualElement(); palette.AddToClassList("map-palette"); palette.style.display = DisplayStyle.None;
-            toolbar.Add(new Button(() => palette.style.display = palette.style.display.value == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None)
-                { text = "花", tooltip = "感情ごとの花の色" });
             Add(toolbar); caption.AddToClassList("map-caption"); caption.pickingMode = PickingMode.Ignore; Add(caption);
             info.AddToClassList("map-info"); info.pickingMode = PickingMode.Ignore; Add(info);
             preview = new Button(() =>
@@ -37,24 +34,6 @@ namespace Cartograph.MapUI
                 info.text = isPreview ? "ドラッグで移動・ホイールで拡大縮小。サンプルから実ノートは開きません。" : "解析データ待ち";
             });
             preview.AddToClassList("map-preview-button"); Add(preview);
-            palette.Add(new Label("花の色"));
-            string[] names = { "喜", "怒", "哀", "楽" };
-            var choices = new List<string> { "黄", "赤", "青", "橙", "紫", "青緑" };
-            var colors = new[] { new UnityEngine.Color32(245,207,91,255), new UnityEngine.Color32(237,109,119,255),
-                new UnityEngine.Color32(111,168,233,255), new UnityEngine.Color32(246,164,87,255),
-                new UnityEngine.Color32(176,138,227,255), new UnityEngine.Color32(79,193,182,255) };
-            for (int i = 0; i < names.Length; i++)
-            {
-                var emotion = (Emotion)i;
-                var choice = new DropdownField(names[i], choices, i);
-                choice.RegisterValueChangedCallback(evt =>
-                {
-                    var color = colors[choices.IndexOf(evt.newValue)]; canvas.SetFlowerColor(emotion, color);
-                    FlowerColorChanged?.Invoke(emotion, color);
-                }); palette.Add(choice);
-            }
-            var paletteHint = new Label("形は感情ごとに固定。色の変更はこの起動中に適用します。");
-            paletteHint.style.whiteSpace = WhiteSpace.Normal; paletteHint.style.fontSize = 11; palette.Add(paletteHint); Add(palette);
             canvas.NodeSelected += node => info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く";
             canvas.MarkSelected += message => info.text = message;
             canvas.NodeDoubleClicked += node =>

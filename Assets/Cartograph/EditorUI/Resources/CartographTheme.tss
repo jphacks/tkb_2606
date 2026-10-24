@@ -134,3 +134,18 @@
     border-radius: 8px; background-color: rgb(25, 37, 54);
 }
 .cartowords .map-palette .unity-base-field__label { min-width: 25px; width: 25px; }
+
+/* Compact controls keep the map wide and reserve height for writing. */
+.cartowords .brand { font-size: 15px; }
+.cartowords .save-status { font-size: 10px; padding: 2px 6px; }
+.cartowords .project-bar { height: 29px; align-items: center; margin-bottom: 3px; }
+.cartowords .project-bar .unity-button { font-size: 11px; padding: 2px 8px; height: 24px; margin-top: 0; margin-bottom: 0; }
+.cartowords .project-bar .unity-text-field__input { padding: 2px 6px; font-size: 11px; }
+.cartowords .project-bar .unity-base-field__label { min-width: 75px; font-size: 11px; }
+.cartowords .right-workspace { padding: 4px; }
+.cartowords .note-header { padding: 2px 8px; }
+.cartowords .format-toolbar .unity-button { padding: 2px 5px; font-size: 10px; min-height: 21px; margin-right: 3px; margin-top: 1px; margin-bottom: 3px; }
+.cartowords .sidebar { padding-top: 6px; }
+.cartowords .sidebar .unity-button { font-size: 11px; padding: 4px 5px; }
+.cartowords .sidebar .primary-action { margin-bottom: 6px; }
+.cartowords .sidebar .section-label { margin-top: 4px; margin-bottom: 4px; }
