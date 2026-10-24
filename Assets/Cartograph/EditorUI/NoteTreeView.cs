@@ -22,6 +22,7 @@ namespace Cartograph.EditorUI
             if (node.IsFolder)
             {
                 var foldout = new Foldout { text = node.Name, value = !expanded.TryGetValue(node.Path, out var open) || open };
+                foldout.AddToClassList("town-folder");
                 foldout.RegisterValueChangedCallback(evt => { expanded[node.Path] = evt.newValue; evt.StopPropagation(); });
                 parent.Add(foldout);
                 foreach (var child in node.Children) AddNode(foldout, child, activeId);
@@ -36,6 +37,8 @@ namespace Cartograph.EditorUI
                     text = (selected ? "● " : "") + label, tooltip = note.RelativePath, focusable = false
                 };
                 button.style.whiteSpace = WhiteSpace.Normal;
+                button.AddToClassList("note-row");
+                if (selected) button.AddToClassList("note-row--selected");
                 button.style.minHeight = 30;
                 button.style.unityTextAlign = UnityEngine.TextAnchor.MiddleLeft;
                 parent.Add(button);

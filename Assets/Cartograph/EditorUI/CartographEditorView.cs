@@ -64,8 +64,8 @@ namespace Cartograph.EditorUI
             root.Clear();
             root.AddToClassList("cartowords");
             root.style.flexGrow = 1;
-            root.style.backgroundColor = (Color)new Color32(244, 243, 239, 255);
-            root.style.color = (Color)new Color32(35, 48, 45, 255);
+            root.style.backgroundColor = (Color)new Color32(31, 36, 50, 255);
+            root.style.color = (Color)new Color32(229, 233, 242, 255);
             root.style.fontSize = 16;
             // Use an installed Japanese-capable font, never a remote font/CDN.
             var fonts = Font.GetOSInstalledFontNames();
@@ -82,23 +82,25 @@ namespace Cartograph.EditorUI
             header.style.paddingRight = 24;
             header.style.height = 64;
             header.style.alignItems = Align.Center;
-            var brand = new Label("CARTOWORDS  /  自分の言葉で、地図をつくる");
-            brand.style.flexGrow = 1;
+            var brand = new Label("CARTOWORDS"); brand.AddToClassList("brand");
             header.Add(brand);
-            status = new Label(); header.Add(status);
+            var tagline = new Label(" /  自分の言葉で、地図をつくる");
+            tagline.style.flexGrow = 1; tagline.AddToClassList("muted"); header.Add(tagline);
+            status = new Label(); status.AddToClassList("save-status"); header.Add(status);
 
             var main = Row(root); main.style.flexGrow = 1; main.style.minHeight = 0;
             var sidebar = new VisualElement();
+            sidebar.AddToClassList("sidebar");
             sidebar.style.width = 280; sidebar.style.paddingLeft = 20; sidebar.style.paddingRight = 20;
             main.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
             sidebar.Add(projectLabel);
-            sidebar.Add(new Label("notes / フォルダとノート"));
+            var sectionLabel = new Label("町とノート"); sectionLabel.AddToClassList("section-label"); sidebar.Add(sectionLabel);
             Button(sidebar, "＋ 新しいノート", () => Run(async () =>
             {
                 await workspace.FlushSave();
                 await workspace.CreateDocument();
-            }));
+            })).AddToClassList("primary-action");
             var scroll = new ScrollView(); scroll.style.flexGrow = 1;
             sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
@@ -107,20 +109,23 @@ namespace Cartograph.EditorUI
 
             var editors = Row(main); editors.style.flexGrow = 1; editors.style.minWidth = 0;
             var paper = new VisualElement();
+            paper.AddToClassList("editor-card");
             paper.style.flexGrow = 1; paper.style.flexBasis = 0; paper.style.minWidth = 260;
             paper.style.marginRight = 24; paper.style.marginBottom = 24;
             paper.style.paddingLeft = 28; paper.style.paddingRight = 28;
             paper.style.paddingTop = 20; paper.style.paddingBottom = 16;
-            paper.style.backgroundColor = Color.white;
             editors.Add(paper);
             breadcrumb = new Label(); breadcrumb.style.fontSize = 12;
+            breadcrumb.AddToClassList("muted");
             breadcrumb.style.whiteSpace = WhiteSpace.Normal; breadcrumb.style.marginBottom = 12;
             paper.Add(breadcrumb);
             title = new TextField { name = "document-title" };
+            title.AddToClassList("note-title");
             title.style.fontSize = 28; title.style.marginBottom = 16;
             title.style.flexShrink = 0;
             paper.Add(title);
             var toolbar = Row(paper); toolbar.style.flexWrap = Wrap.Wrap;
+            toolbar.AddToClassList("format-toolbar");
             toolbar.style.flexShrink = 0;
             undoButton = Button(toolbar, "元に戻す", () => ReplayUndo(false));
             redoButton = Button(toolbar, "やり直し", () => ReplayUndo(true));
@@ -134,19 +139,21 @@ namespace Cartograph.EditorUI
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
             Button(toolbar, "このノートを右に開く", () => OpenNoteBeside(activeId, 1));
             var hint = new Label("初期試作：Markdown編集。書式ボタンで記号を挿入します。");
+            hint.AddToClassList("muted");
             hint.style.fontSize = 12; hint.style.marginTop = 8; hint.style.marginBottom = 10;
             hint.style.whiteSpace = WhiteSpace.Normal; hint.style.flexShrink = 0;
             paper.Add(hint);
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None;
-            pasteNotice.style.color = (Color)new Color32(151, 70, 40, 255);
+            pasteNotice.style.color = (Color)new Color32(255, 170, 133, 255);
             paper.Add(pasteNotice);
             body = new TextField { name = "document-body", multiline = true };
+            body.AddToClassList("note-body");
             body.style.flexGrow = 1; body.style.minHeight = 150; body.style.fontSize = 18;
             body.verticalScrollerVisibility = ScrollerVisibility.Auto;
             paper.Add(body);
-            count = new Label(); count.style.marginTop = 10; paper.Add(count);
+            count = new Label(); count.AddToClassList("muted"); count.style.marginTop = 10; paper.Add(count);
             message = new Label(); message.style.whiteSpace = WhiteSpace.Normal;
-            message.style.color = (Color)new Color32(151, 70, 40, 255); paper.Add(message);
+            message.style.color = (Color)new Color32(255, 170, 133, 255); paper.Add(message);
             var probe = new M0ProbePanel(); probe.style.display = DisplayStyle.None;
             Button(paper, "M0検証欄の表示／非表示", () =>
                 probe.style.display = probe.style.display.value == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None);

@@ -27,7 +27,7 @@ namespace Cartograph.EditorUI
             style.paddingLeft = 20; style.paddingRight = 20;
             style.paddingTop = 20; style.paddingBottom = 16;
             style.marginRight = 20; style.marginBottom = 24;
-            style.backgroundColor = Color.white;
+            AddToClassList("editor-card");
             heading = new Label(); heading.style.whiteSpace = WhiteSpace.Normal; Add(heading);
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None; Add(pasteNotice);
             Add(new Button(() => { if (!composing() && Submit(ChangeOrigin.Typing)) this.closed(); }) { text = "右のノートを閉じる" });
@@ -35,6 +35,7 @@ namespace Cartograph.EditorUI
             tools.Add(new Button(() => Replay(false)) { text = "元に戻す" });
             tools.Add(new Button(() => Replay(true)) { text = "やり直し" });
             body = new TextField { multiline = true, name = "secondary-note-body" };
+            body.AddToClassList("note-body");
             body.style.flexGrow = 1; body.style.minHeight = 180; body.style.fontSize = 18;
             body.verticalScrollerVisibility = ScrollerVisibility.Auto; Add(body);
             info = new Label(); info.style.whiteSpace = WhiteSpace.Normal; Add(info);
