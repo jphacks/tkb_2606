@@ -22,6 +22,7 @@ namespace Cartograph.MapUI
             public Quad(Rect rect, Color32 color) { Rect = rect; Color = color; }
         }
         private readonly MapViewport viewport = new MapViewport();
+        private readonly MapTouchGesture touchGesture = new MapTouchGesture();
         private readonly VisualElement labels = new VisualElement { pickingMode = PickingMode.Ignore };
         private readonly List<Label> labelPool = new List<Label>();
         private readonly Dictionary<Emotion, Color32> flowerColors = new Dictionary<Emotion, Color32>
@@ -52,12 +53,21 @@ namespace Cartograph.MapUI
             { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
             RegisterCallback<PointerDownEvent>(evt =>
             {
+                if (evt.pointerType == UnityEngine.UIElements.PointerType.touch)
+                {
+                    dragging = false;
+                    if (touchGesture.Count > 0) lastClick = null;
+                    touchGesture.Down(evt.pointerId, new MapPoint(evt.localPosition.x, evt.localPosition.y));
+                    this.CapturePointer(evt.pointerId); evt.StopPropagation(); return;
+                }
                 if (evt.button != 0) return;
                 pointerStart = previousPointer = evt.localPosition; dragging = true; moved = false;
                 this.CapturePointer(evt.pointerId); evt.StopPropagation();
             });
             RegisterCallback<PointerMoveEvent>(evt =>
             {
+                if (touchGesture.Move(evt.pointerId, new MapPoint(evt.localPosition.x, evt.localPosition.y), viewport))
+                { Repaint(); evt.StopPropagation(); return; }
                 if (!dragging) return;
                 Vector2 point = evt.localPosition;
                 if ((point - pointerStart).sqrMagnitude > 25) moved = true;
@@ -66,12 +76,22 @@ namespace Cartograph.MapUI
             });
             RegisterCallback<PointerUpEvent>(evt =>
             {
+                if (touchGesture.Contains(evt.pointerId))
+                {
+                    bool tap = touchGesture.Up(evt.pointerId);
+                    this.ReleasePointer(evt.pointerId);
+                    if (tap) SelectAt(evt.localPosition);
+                    evt.StopPropagation(); return;
+                }
                 if (!dragging || evt.button != 0) return;
                 dragging = false; this.ReleasePointer(evt.pointerId);
                 if (!moved) SelectAt(evt.localPosition);
                 evt.StopPropagation();
             });
-            RegisterCallback<PointerCaptureOutEvent>(_ => dragging = false);
+            RegisterCallback<PointerCaptureOutEvent>(evt => { touchGesture.Up(evt.pointerId, true); dragging = false; });
+            RegisterCallback<PointerCancelEvent>(evt =>
+            { touchGesture.Up(evt.pointerId, true); this.ReleasePointer(evt.pointerId); dragging = false; });
+            RegisterCallback<DetachFromPanelEvent>(_ => { touchGesture.Clear(); dragging = false; });
             RegisterCallback<WheelEvent>(evt =>
             {
                 viewport.Zoom(Mathf.Exp(-evt.delta.y * 0.08f), new MapPoint(evt.localMousePosition.x, evt.localMousePosition.y));

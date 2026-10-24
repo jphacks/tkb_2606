@@ -52,7 +52,6 @@ namespace Cartograph.EditorUI
         private DropdownField relatedNote;
         private Button addRelated;
         private string relatedSignature;
-        private Label projectSelection;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -117,8 +116,7 @@ namespace Cartograph.EditorUI
             projectPath = new TextField { label = "プロジェクト", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
             projectPath.style.width = 360; projectPath.style.maxWidth = Length.Percent(55); projectBar.Add(projectPath);
             projectPath.textEdition.placeholder = "ファイルが選択されていません";
-            projectSelection = new Label("未選択"); projectSelection.AddToClassList("muted"); projectBar.Add(projectSelection);
-            Button(projectBar, "開く", () => Run(OpenProjectFolder));
+            Button(projectBar, "ファイルを選択", SelectProjectFolder);
             Button(projectBar, "閉じる", () => Run(async () =>
             {
                 if (!(workspace is ProjectEditorWorkspace target)) throw new InvalidOperationException("通常モードで開いてください。");
@@ -127,14 +125,6 @@ namespace Cartograph.EditorUI
                 secondaryPane.Hide(); reviewed.Bind(null, null); activeId = null; undoHistories.Clear();
                 ResetMapContext();
             }));
-#if UNITY_EDITOR
-            Button(projectBar, "フォルダを選択", () =>
-            {
-                var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS プロジェクトを開く", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
-                if (string.IsNullOrEmpty(selected)) return;
-                Run(() => OpenProjectAt(selected));
-            });
-#endif
 
             var main = new TwoPaneSplitView(0, 520, TwoPaneSplitViewOrientation.Horizontal);
             main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
@@ -381,11 +371,9 @@ namespace Cartograph.EditorUI
             emptyNoteMessage.style.display = current == null ? DisplayStyle.Flex : DisplayStyle.None;
             bool projectOpen = !(workspace is IReviewingEditorWorkspace project) || project.Tree != null;
             var actualRoot = (workspace as ProjectEditorWorkspace)?.ProjectRoot;
-            projectSelection.text = actualRoot == null ? "未選択（入力後に「開く」）" : "開いています";
             var pathFocus = projectPath.panel?.focusController.focusedElement as VisualElement;
             bool editingPath = pathFocus != null && (ReferenceEquals(pathFocus, projectPath) || projectPath.Contains(pathFocus));
             if (actualRoot != null && !editingPath) projectPath.SetValueWithoutNotify(actualRoot);
-            if (actualRoot != null && editingPath && projectPath.value != actualRoot) projectSelection.text = "入力中（「開く」で切替）";
             mapPanel.SetProjectOpen(projectOpen);
             emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
                 "まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。";
@@ -518,6 +506,20 @@ namespace Cartograph.EditorUI
         private async Task OpenProjectFolder()
         {
             await OpenProjectAt(projectPath.value);
+        }
+
+        private void SelectProjectFolder()
+        {
+#if UNITY_EDITOR
+            var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS 保存先フォルダを選択", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
+            if (!string.IsNullOrEmpty(selected)) Run(() => OpenProjectAt(selected));
+#else
+            // A native folder picker is not bundled in the player yet.
+            // Preserve the existing path entry fallback instead of a nonfunctional button.
+            if (string.IsNullOrWhiteSpace(projectPath.value))
+            { message.text = "保存先フォルダのパスをプロジェクト欄に入力して「ファイルを選択」を押してください。"; projectPath.Focus(); return; }
+            Run(OpenProjectFolder);
+#endif
         }
 
         private async Task OpenProjectAt(string selected)

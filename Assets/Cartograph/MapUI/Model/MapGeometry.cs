@@ -23,6 +23,11 @@ namespace Cartowords.MapPresentation
             var world = World(anchor); Scale = Math.Max(0.12f, Math.Min(3f, Scale * factor));
             OffsetX = anchor.X - world.X * Scale; OffsetY = anchor.Y - world.Y * Scale;
         }
+        public void Pinch(MapPoint oldCenter, MapPoint newCenter, float oldDistance, float newDistance)
+        {
+            if (oldDistance > 1 && newDistance > 1) Zoom(newDistance / oldDistance, oldCenter);
+            Pan(newCenter.X - oldCenter.X, newCenter.Y - oldCenter.Y);
+        }
         public void Fit(IEnumerable<MapPoint> points, float width, float height)
         {
             var list = points.ToArray();
@@ -34,6 +39,47 @@ namespace Cartowords.MapPresentation
             OffsetX = width / 2 - (left + right) / 2 * Scale;
             OffsetY = height / 2 - (top + bottom) / 2 * Scale;
         }
+    }
+    public sealed class MapTouchGesture
+    {
+        private sealed class Touch { public MapPoint Start, Point; public bool Moved; }
+        private readonly Dictionary<int, Touch> touches = new Dictionary<int, Touch>();
+        public int Count => touches.Count;
+        public bool Contains(int id) => touches.ContainsKey(id);
+        public void Down(int id, MapPoint point)
+        {
+            touches[id] = new Touch { Start = point, Point = point };
+            if (touches.Count > 1) foreach (var touch in touches.Values) touch.Moved = true;
+        }
+        public bool Move(int id, MapPoint point, MapViewport viewport)
+        {
+            if (!touches.TryGetValue(id, out var touch)) return false;
+            var pair = touches.OrderBy(p => p.Key).Take(2).Select(p => p.Value).ToArray();
+            var previous = touch.Point;
+            if (pair.Length == 2)
+            {
+                var oldCenter = Center(pair[0].Point, pair[1].Point); float oldDistance = Distance(pair[0].Point, pair[1].Point);
+                touch.Point = point;
+                viewport.Pinch(oldCenter, Center(pair[0].Point, pair[1].Point), oldDistance, Distance(pair[0].Point, pair[1].Point));
+            }
+            else
+            {
+                touch.Point = point;
+                if (Distance(touch.Start, point) > 5) touch.Moved = true;
+                if (touch.Moved) viewport.Pan(point.X - previous.X, point.Y - previous.Y);
+            }
+            return true;
+        }
+        public bool Up(int id, bool cancel = false)
+        {
+            if (!touches.TryGetValue(id, out var touch)) return false;
+            touches.Remove(id);
+            foreach (var other in touches.Values) other.Moved = true;
+            return !cancel && !touch.Moved;
+        }
+        public void Clear() => touches.Clear();
+        private static MapPoint Center(MapPoint a, MapPoint b) => new MapPoint((a.X + b.X) / 2, (a.Y + b.Y) / 2);
+        private static float Distance(MapPoint a, MapPoint b) => (float)Math.Sqrt((a.X-b.X)*(a.X-b.X)+(a.Y-b.Y)*(a.Y-b.Y));
     }
     public static class MapLayout
     {
