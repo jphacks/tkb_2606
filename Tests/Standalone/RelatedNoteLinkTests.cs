@@ -12,6 +12,34 @@ namespace Cartograph.IntegrationTests
     public class RelatedNoteLinkTests
     {
         [Test]
+        public void RelatedLinkIsHiddenButInlineLinkRemainsPartOfParagraph()
+        {
+            Assert.That(MarkdownBlockProjection.Parse("[[B]]")[0].IsRelatedLink, Is.True);
+            Assert.That(MarkdownBlockProjection.Parse("説明 [[B]] 続き")[0].IsRelatedLink, Is.False);
+            Assert.That(Cartograph.EditorUI.Navigation.MarkdownTextCount.Count("# 本文\n[[B]]\n"), Is.EqualTo(2));
+        }
+        [Test]
+        public void AlreadyLinkedTargetDoesNotAddDuplicateLines()
+        {
+            var first = RelatedNoteLink.Insert("# 本文", 4, "A", "B", new[] { "A", "B" });
+            var second = RelatedNoteLink.Insert(first.Text, 1, "A", "B", new[] { "A", "B" });
+            Assert.That(second.Text, Is.EqualTo(first.Text));
+        }
+        [Test]
+        public void MenuConnectionsComeFromActualIncomingAndOutgoingRoads()
+        {
+            var request = new Cartowords.MapPresentation.MapRequest("p", 1, new System.Collections.Generic.Dictionary<string,long>());
+            var map = new Cartowords.MapPresentation.MapSnapshot(request, new[] {
+                new Cartowords.MapPresentation.MapNode("a", "A", "A", 1, 0),
+                new Cartowords.MapPresentation.MapNode("b", "B", "B", 1, 0),
+                new Cartowords.MapPresentation.MapNode("c", "C", "C", 1, 0),
+                new Cartowords.MapPresentation.MapNode("d", "D", "D", 1, 0) }, new[] {
+                new Cartowords.MapPresentation.MapRoad("a", "b"), new Cartowords.MapPresentation.MapRoad("c", "a"),
+                new Cartowords.MapPresentation.MapRoad("a", "d", auto: true) });
+            Assert.That(MapAnalysisAdapter.ConnectedNotes(map, "A"), Is.EquivalentTo(new[] { "B", "C" }));
+            Assert.That(MapAnalysisAdapter.ConnectedNotes(null, "A"), Is.Empty);
+        }
+        [Test]
         public void InsertAtParagraphEndPreservesTextAndResolvesExactFolder()
         {
             string[] ids = { "A", "町/B", "他/B" };

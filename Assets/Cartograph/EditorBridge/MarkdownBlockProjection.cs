@@ -16,6 +16,7 @@ namespace Cartograph.EditorUI
         public string Raw { get; }
         public string DisplayText { get; }
         public int HeadingLevel { get; }
+        public bool IsRelatedLink => System.Text.RegularExpressions.Regex.IsMatch(Raw, @"^\s*\[\[[^\]\r\n]+\]\]\s*$");
         internal MarkdownBlock(int start, string raw, int prefix, int heading, string display, int[] offsets)
         { SourceStart = start; Raw = raw; prefixLength = prefix; HeadingLevel = heading; DisplayText = display; visibleOffsets = offsets; }
         public int RawOffset(int displayOffset)

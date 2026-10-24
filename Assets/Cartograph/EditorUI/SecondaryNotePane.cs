@@ -21,6 +21,7 @@ namespace Cartograph.EditorUI
         private readonly RichNoteEditor rich;
         private IReviewingEditorWorkspace reviewingWorkspace;
         public void SetReviewWorkspace(IReviewingEditorWorkspace workspace) { reviewingWorkspace = workspace; }
+        public void ResetHistory() => rich.ResetHistory();
         public void CompositionChanged(bool active) { reviewed.CompositionChanged(active); rich.CompositionChanged(active); }
         public void TextInput(char character) { reviewed.TextInput(character); rich.TextInput(character); }
         public string DocumentId { get; private set; }
@@ -39,7 +40,7 @@ namespace Cartograph.EditorUI
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None; Add(pasteNotice);
             Add(new Button(() => { if (!composing() && Submit(ChangeOrigin.Typing)) this.closed(); }) { text = "分割ノートを閉じる" });
             tools = new VisualElement(); tools.style.flexDirection = FlexDirection.Row; Add(tools);
-            tools.Add(new Button(() => Replay(false)) { text = "元に戻す" });
+            tools.Add(new Button(() => Replay(false)) { text = "↶ 戻る", tooltip = "直前の編集を取り消す（Ctrl+Z）" });
             tools.Add(new Button(() => Replay(true)) { text = "やり直し" });
             body = new TextField { multiline = true, name = "secondary-note-body" };
             body.AddToClassList("note-body");
