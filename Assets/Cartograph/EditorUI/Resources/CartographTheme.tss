@@ -1,1 +1,32 @@
 @import url("unity-theme://default");
+
+.cartowords .unity-text-element {
+    color: rgb(35, 48, 45);
+}
+
+.cartowords .unity-button {
+    background-color: rgb(238, 242, 240);
+    border-color: rgb(180, 192, 186);
+    padding-left: 12px;
+    padding-right: 12px;
+    padding-top: 6px;
+    padding-bottom: 6px;
+    flex-shrink: 0;
+    font-size: 14px;
+}
+
+.cartowords .unity-button:hover {
+    background-color: rgb(218, 232, 224);
+}
+
+.cartowords .unity-button:disabled {
+    opacity: 0.5;
+}
+
+.cartowords .unity-text-field__input {
+    background-color: rgb(255, 255, 255);
+    padding-left: 10px;
+    padding-right: 10px;
+    padding-top: 8px;
+    padding-bottom: 8px;
+}

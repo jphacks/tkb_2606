@@ -62,13 +62,14 @@ namespace Cartograph.EditorUI
                 document.panelSettings.themeStyleSheet = Resources.Load<ThemeStyleSheet>("CartographTheme");
             root = document.rootVisualElement;
             root.Clear();
+            root.AddToClassList("cartowords");
             root.style.flexGrow = 1;
             root.style.backgroundColor = (Color)new Color32(244, 243, 239, 255);
             root.style.color = (Color)new Color32(35, 48, 45, 255);
             root.style.fontSize = 16;
             // Use an installed Japanese-capable font, never a remote font/CDN.
             var fonts = Font.GetOSInstalledFontNames();
-            foreach (var candidate in new[] { "Yu Gothic", "Meiryo", "Noto Sans CJK JP", "Hiragino Sans" })
+            foreach (var candidate in new[] { "Meiryo", "Noto Sans CJK JP", "Hiragino Sans", "Yu Gothic" })
             {
                 if (Array.IndexOf(fonts, candidate) < 0) continue;
                 ownedFont = Font.CreateDynamicFontFromOSFont(candidate, 18);
@@ -81,7 +82,7 @@ namespace Cartograph.EditorUI
             header.style.paddingRight = 24;
             header.style.height = 64;
             header.style.alignItems = Align.Center;
-            var brand = new Label("CARTOGRAPH  /  自分の言葉で、地図をつくる");
+            var brand = new Label("CARTOWORDS  /  自分の言葉で、地図をつくる");
             brand.style.flexGrow = 1;
             header.Add(brand);
             status = new Label(); header.Add(status);
@@ -117,8 +118,10 @@ namespace Cartograph.EditorUI
             paper.Add(breadcrumb);
             title = new TextField { name = "document-title" };
             title.style.fontSize = 28; title.style.marginBottom = 16;
+            title.style.flexShrink = 0;
             paper.Add(title);
             var toolbar = Row(paper); toolbar.style.flexWrap = Wrap.Wrap;
+            toolbar.style.flexShrink = 0;
             undoButton = Button(toolbar, "元に戻す", () => ReplayUndo(false));
             redoButton = Button(toolbar, "やり直し", () => ReplayUndo(true));
             Button(toolbar, "見出し1", () => PrefixLine("# "));
@@ -132,6 +135,7 @@ namespace Cartograph.EditorUI
             Button(toolbar, "このノートを右に開く", () => OpenNoteBeside(activeId, 1));
             var hint = new Label("初期試作：Markdown編集。書式ボタンで記号を挿入します。");
             hint.style.fontSize = 12; hint.style.marginTop = 8; hint.style.marginBottom = 10;
+            hint.style.whiteSpace = WhiteSpace.Normal; hint.style.flexShrink = 0;
             paper.Add(hint);
             pasteNotice = new Label(); pasteNotice.style.display = DisplayStyle.None;
             pasteNotice.style.color = (Color)new Color32(151, 70, 40, 255);
