@@ -18,7 +18,7 @@ namespace Cartograph.EditorUI.Navigation
         }
 
         // Display model only; never used for filesystem access or authorization.
-        private static string Normalize(string path)
+        internal static string Normalize(string path)
         {
             if (string.IsNullOrEmpty(path)) throw new ArgumentException("Relative note path is required.");
             path = path.Replace('\\', '/');
@@ -54,13 +54,24 @@ namespace Cartograph.EditorUI.Navigation
 
     public static class NoteTree
     {
-        public static NoteTreeNode Build(IEnumerable<NoteTreeEntry> notes)
+        public static NoteTreeNode Build(IEnumerable<NoteTreeEntry> notes, IEnumerable<string> folderPaths = null)
         {
             if (notes == null) throw new ArgumentNullException(nameof(notes));
             var root = new NoteTreeNode("notes", "");
             var folders = new Dictionary<string, NoteTreeNode>(StringComparer.Ordinal) { { "", root } };
             var paths = new HashSet<string>(StringComparer.Ordinal);
             var ids = new HashSet<string>(StringComparer.Ordinal);
+            foreach (var raw in folderPaths ?? Array.Empty<string>())
+            {
+                var parent = root; string path = "";
+                foreach (var part in NoteTreeEntry.Normalize(raw).Split('/'))
+                {
+                    path = path.Length == 0 ? part : path + "/" + part;
+                    if (!folders.TryGetValue(path, out var folder))
+                    { folder = new NoteTreeNode(part, path); folders.Add(path, folder); parent.Add(folder); }
+                    parent = folder;
+                }
+            }
             foreach (var note in notes)
             {
                 if (note == null) throw new ArgumentException("Null note.");

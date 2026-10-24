@@ -19,7 +19,7 @@ namespace Cartograph.EditorUI
 
     /// <summary>UI adapter with shared, reviewed sessions for both editor panes.</summary>
     public sealed class ProjectEditorWorkspace : IReviewingEditorWorkspace, IProjectNavigationSource,
-        ISecondaryNoteEditor, IReviewedNoteAccess
+        ISecondaryNoteEditor, IReviewedNoteAccess, IProjectedCopyAccess
     {
         private sealed class Entry
         {
@@ -38,6 +38,7 @@ namespace Cartograph.EditorUI
         { this.options = options ?? new NoteSessionOptions(); this.fileSystem = fileSystem; }
         public event Action Changed;
         public bool IsPersistent => true;
+        public string ProjectRoot => project?.Root;
         public string ProjectName => project == null ? "プロジェクトを開いてください" : Path.GetFileName(project.Root);
         public FolderNode Tree => project?.Tree;
         public IReadOnlyList<NoteTreeEntry> Notes => project == null ? Array.Empty<NoteTreeEntry>() :
@@ -85,7 +86,13 @@ namespace Cartograph.EditorUI
         public async Task<DocumentRecord> LoadDocument(string id)
         {
             if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
-            if (!open.ContainsKey(id)) Attach(await project.OpenNote(NotePath.Parse(id)));
+            if (!open.ContainsKey(id))
+            {
+                var source = project;
+                var session = await source.OpenNote(NotePath.Parse(id));
+                if (!ReferenceEquals(source, project)) throw new OperationCanceledException("プロジェクトが変わりました。");
+                if (!open.ContainsKey(id)) Attach(session);
+            }
             return Record(Require(id));
         }
         public async Task OpenDocument(string id)
@@ -133,6 +140,21 @@ namespace Cartograph.EditorUI
         public ReviewResult ReviewChange(string documentId, ChangeCandidate candidate)
         { return ReviewDocument(documentId, Require(documentId).Revision, candidate); }
         public void NotifyCopied(string documentId, int start, int length) => Require(documentId).Session.NotifyCopied(start, length);
+        public void NotifyProjectedCopied(string documentId, string visibleText, IReadOnlyList<int> sourceOffsets)
+        {
+            var original = GetLabeledDocument(documentId);
+            if (visibleText == null || sourceOffsets == null || visibleText.Length != sourceOffsets.Count)
+                throw new ArgumentException("コピー範囲が一致しません。");
+            var projected = new LabeledText();
+            for (int i = 0; i < sourceOffsets.Count; i++)
+            {
+                int at = sourceOffsets[i];
+                if (at < 0 || at >= original.Length || original.Text[at] != visibleText[i] || (i > 0 && at <= sourceOffsets[i - 1]))
+                    throw new ArgumentException("コピー位置が変更されています。");
+                projected.Insert(projected.Length, visibleText.Substring(i, 1), original.Slice(at, 1));
+            }
+            project.Clipboard.Set(documentId, sourceOffsets.Count == 0 ? 0 : sourceOffsets[0], visibleText, projected.Labels);
+        }
         public void ApplyEditorChange(string documentId, string markdown, ChangeOrigin origin)
         {
             // Never accept unreviewed typing in the production UI.
@@ -141,6 +163,33 @@ namespace Cartograph.EditorUI
         }
         public DocumentRecord ApplySecondaryEdit(string id, long expectedRevision, string markdown, ChangeOrigin origin)
         { throw new InvalidOperationException("右ペインの編集にもReviewDocumentを使用してください。"); }
+        public async Task DeleteDocument(string id)
+        {
+            if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
+            await FlushSave();
+            try { await project.TrashNote(NotePath.Parse(id)); }
+            catch
+            {
+                open.Remove(id);
+                await LoadDocument(id);
+                throw;
+            }
+            open.Remove(id);
+            if (currentId == id)
+            {
+                currentId = null;
+                var first = project.AllNotes().FirstOrDefault();
+                if (first.IsValid) await OpenDocument(first.Value);
+            }
+            Notify();
+        }
+        public async Task CloseProject()
+        {
+            await FlushSave();
+            if (project != null)
+                foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
+            project = null; currentId = null; open.Clear(); Notify();
+        }
         public async Task FlushSave()
         {
             if (project != null) await project.FlushAll();

@@ -121,6 +121,31 @@ namespace Cartograph.Core
             return target;
         }
 
+        public async Task TrashNote(NotePath note)
+        {
+            if (!NoteExists(note)) throw new FileNotFoundException("ノートが見つかりません: " + note);
+            await FlushAll();
+            await CloseNote(note);
+            string trash = System.IO.Path.Combine(Root, ".cartograph", "trash", Guid.NewGuid().ToString("N"));
+            var moved = new List<KeyValuePair<string, string>>();
+            try
+            {
+                foreach (var source in new[] { paths.NoteFile(note), paths.HistoryFile(note), paths.SnapshotFile(note) })
+                {
+                    if (!fs.FileExists(source)) continue;
+                    string target = System.IO.Path.Combine(trash, moved.Count + "-" + System.IO.Path.GetFileName(source));
+                    fs.MoveFile(source, target); moved.Add(new KeyValuePair<string, string>(source, target));
+                }
+            }
+            catch
+            {
+                for (int i = moved.Count - 1; i >= 0; i--) fs.MoveFile(moved[i].Value, moved[i].Key);
+                throw;
+            }
+            Clipboard.Clear();
+            RefreshTree();
+        }
+
         public async Task FlushAll()
         {
             var open = new List<Task<NoteSession>>(sessions.Values);

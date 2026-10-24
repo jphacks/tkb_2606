@@ -7,6 +7,18 @@ namespace Cartograph.EditorUI.Tests
     public sealed class NoteTreeTests
     {
         [Test]
+        public void EmptyTownsAndNestedEmptyTownsAreVisible()
+        {
+            var root = NoteTree.Build(Array.Empty<NoteTreeEntry>(), new[] { "大学/授業/科目A" });
+            Assert.That(root.Children[0].Name, Is.EqualTo("大学"));
+            Assert.That(root.Children[0].Children[0].Children[0].Name, Is.EqualTo("科目A"));
+        }
+        [Test]
+        public void EmptyFolderCannotCollideWithNotePath()
+        {
+            Assert.Throws<ArgumentException>(() => NoteTree.Build(new[] { new NoteTreeEntry("a", "A.md", "A") }, new[] { "A.md" }));
+        }
+        [Test]
         public void ThreeNestedFoldersPreserveDocumentIdAndPath()
         {
             var root = NoteTree.Build(new[] { new NoteTreeEntry("note1", "大学用/授業/科目A/ノート.md", "ノート") });
