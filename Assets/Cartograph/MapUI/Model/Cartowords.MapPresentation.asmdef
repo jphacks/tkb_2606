@@ -1,0 +1,7 @@
+{
+  "name": "Cartowords.MapPresentation",
+  "rootNamespace": "Cartowords.MapPresentation",
+  "references": [],
+  "autoReferenced": true,
+  "noEngineReferences": true
+}

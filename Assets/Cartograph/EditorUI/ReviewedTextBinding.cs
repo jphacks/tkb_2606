@@ -86,6 +86,24 @@ namespace Cartograph.EditorUI
             if (!Enabled) return;
             CaptureSelection();
             if (composing()) return;
+            // Some input backends send Shift+Enter as a newline character with no
+            // Return key code. Handle both forms, after the IME composition guard.
+            if (evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter ||
+                evt.character == '\r' || evt.character == '\n')
+            {
+                // Stopping propagation alone does not cancel TextField's default
+                // action (Shift+Enter can commit/blur a field). Insert exactly one
+                // reviewed newline and retain the editing focus and selection.
+                field.panel?.focusController.IgnoreEvent(evt);
+                evt.StopImmediatePropagation();
+                if (!Submit(ChangeOrigin.Typing)) return;
+                CaptureSelection();
+                int start = Math.Min(beforeStart, beforeEnd), end = Math.Max(beforeStart, beforeEnd);
+                if (Apply(accepted.Remove(start, end - start).Insert(start, "\n"),
+                    new InputEvidence { Kind = EvidenceKind.Key, Text = "\n" }, true))
+                    field.SelectRange(start + 1, start + 1);
+                return;
+            }
             bool modifier = evt.ctrlKey || evt.commandKey;
             if ((modifier && evt.keyCode == KeyCode.V) || (evt.shiftKey && evt.keyCode == KeyCode.Insert))
             { evt.StopImmediatePropagation(); ClipboardCommand("Paste"); return; }

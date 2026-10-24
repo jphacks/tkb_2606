@@ -1,0 +1,29 @@
+しょうたろうへ、dev/theta（0e04239 / 型はf077eca）のModelを確認しました。前回の返答を次の内容に更新します。
+
+1. Node.Line
+了解です。Node.File.ValueをノートID、Node.Lineを1始まりの行番号として、既存のOpenNoteBesideへ接続できます。Positionからの変換は不要です。
+型は現在の描画に必要な情報を満たしています。Edge.Reason/CrossFolder、Node.Level、Fog.Text、Flower.Wordなどは現在の描画DTOでは未使用ですが、Analysisから削除する必要はありません。感情のSorrow/Pleasureは描画側のSadness/Delightへ明示的に変換します。enumの数値キャストに依存しません。
+
+2. MapRequest
+了解です。AnalysisはUIの型に依存せず、AnalysisResult.Revisionsだけ返す方針で問題ありません。
+アダプターが呼び出し時のProjectKey/Generationを保持し、結果のRevisions（NotePath.Value→revision）が入力と一致することを確認してからMapSnapshotに付けます。UIでも現在のプロジェクト・世代・全ノートの版を照合します。AnalysisResultへUI型を追加する必要はありません。
+
+3. revisionの現状とキャッシュ
+現行ProjectEditorWorkspaceでは、ロード済みノートの確定編集（許可された変更）でrevisionを増やしています。保存通知や通常のノート切替だけでは戻りません。
+ただし永続的・全期間単調増加ではありません。
+- プロジェクトを開き直すとEntryを作り直すため0からになります。同じパスの別プロジェクトも0からです。
+- 名前変更時もAttachし直すため0になります。
+- 削除して同名で作り直す場合も同じ値が再登場し得ます。
+- 外部ファイル編集を開いているセッションへ反映する監視処理は現状ありません。開き直すと異なる本文をrevision=0で読み込む可能性があります。
+したがってNoteId+revisionだけの永続キャッシュは避けてください。
+提案：プロジェクトを開き直す／ノート集合・名前が変わる際に解析キャッシュを破棄。ノート単位の再利用を厳密に保証するには、本文だけでなく来歴ラベルも含む入力の一致を確認してください。TypedCharsが来歴に依存するため本文ハッシュだけでも不足します。ラベル込みの同一性確認が未実装なら、まず毎回解析する方が安全です。revisionを永続化された履歴seqとみなさないでください。
+このターンではCore/Bridgeのrevision仕様を変更していません。単調増加の新しい契約が必要なら差分として別途合意しましょう。
+
+4. 全ノートのロード
+全ノートをロードしてから渡す前提で合っています。アダプター側でLoadDocument(id)を全件待ち、GetLabeledDocument(id)（内部でCloneDocument）と対応するDocumentRecord.revisionを取得してAnalysisInput一覧を作る方針です。表示中のノートを切り替えずにロードできます。
+取得中にプロジェクト・ノート集合・版が変わった場合は入力を取り直します。ロード失敗のノートを黙って除外した部分結果は公開せず、前の地図を保持してエラーを通知する方針です。
+現時点ではこの全件ロード・Analyze呼び出しのアダプターは未実装です。接続方針への回答であり、すでに動作しているという意味ではありません。
+
+窓口ProjectAnalyzer.Analyze(AnalysisInput一覧) → AnalysisResultに賛成です。今回fetchできたdev/thetaにはModelがありましたが、Analysis/ParsingとProjectAnalyzerの実装はまだありませんでした。追加push後に接続します。
+
+AnalysisをCoreと別の純C#アセンブリにする構成も問題ありません。CoreへUI依存を入れない方針でお願いします。

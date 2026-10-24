@@ -1,6 +1,6 @@
 {
   "name": "Cartograph.EditorUndo.Tests",
-  "references": ["Cartograph.EditorUndo", "Cartograph.NavigationModel"],
+  "references": ["Cartograph.EditorUndo", "Cartograph.NavigationModel", "Cartowords.MapPresentation"],
   "includePlatforms": ["Editor"],
   "optionalUnityReferences": ["TestAssemblies"],
   "autoReferenced": false
