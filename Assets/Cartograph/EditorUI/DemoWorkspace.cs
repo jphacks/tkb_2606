@@ -7,7 +7,7 @@ using Cartograph.EditorUI.Navigation;
 namespace Cartograph.EditorUI
 {
     // UI demonstration only: deliberately never reports durable save success.
-    public sealed class DemoWorkspace : IEditorWorkspace, IProjectNavigationSource
+    public sealed class DemoWorkspace : IEditorWorkspace, IProjectNavigationSource, ISecondaryNoteEditor
     {
         private readonly List<DocumentRecord> documents = new List<DocumentRecord>();
         private DocumentRecord current;
@@ -79,5 +79,17 @@ namespace Cartograph.EditorUI
 
         public Task FlushSave() => Task.CompletedTask;
         public string ExportMarkdown() => current?.markdown ?? "";
+
+        public DocumentRecord ApplySecondaryEdit(string documentId, long expectedRevision, string markdown, ChangeOrigin origin)
+        {
+            var document = documents.First(d => d.id == documentId);
+            if (document.revision != expectedRevision)
+                throw new InvalidOperationException("別のペインで更新されました。内容を確認してください。");
+            document.markdown = markdown;
+            document.revision++;
+            document.updatedAt = DateTime.UtcNow.ToString("O");
+            Changed?.Invoke();
+            return document.Copy();
+        }
     }
 }

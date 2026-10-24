@@ -20,6 +20,7 @@ namespace Cartograph.EditorUI
         private IEditorWorkspace workspace;
         private VisualElement root;
         private NoteTreeView noteTree;
+        private SecondaryNotePane secondaryPane;
         private Label projectLabel, breadcrumb;
         private TextField title, body;
         private Label status, count, message, pasteNotice;
@@ -96,13 +97,14 @@ namespace Cartograph.EditorUI
             noteTree.NoteSelected += id => Run(async () =>
             { await workspace.FlushSave(); await workspace.OpenDocument(id); });
 
+            var editors = Row(main); editors.style.flexGrow = 1; editors.style.minWidth = 0;
             var paper = new VisualElement();
-            paper.style.flexGrow = 1; paper.style.minWidth = 0;
+            paper.style.flexGrow = 1; paper.style.flexBasis = 0; paper.style.minWidth = 260;
             paper.style.marginRight = 24; paper.style.marginBottom = 24;
             paper.style.paddingLeft = 28; paper.style.paddingRight = 28;
             paper.style.paddingTop = 20; paper.style.paddingBottom = 16;
             paper.style.backgroundColor = Color.white;
-            main.Add(paper);
+            editors.Add(paper);
             breadcrumb = new Label(); breadcrumb.style.fontSize = 12;
             breadcrumb.style.whiteSpace = WhiteSpace.Normal; breadcrumb.style.marginBottom = 12;
             paper.Add(breadcrumb);
@@ -120,6 +122,7 @@ namespace Cartograph.EditorUI
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             Button(toolbar, "保存を再試行", () => Run(() => workspace.FlushSave()));
+            Button(toolbar, "このノートを右に開く", () => OpenNoteBeside(activeId, 1));
             var hint = new Label("初期試作：Markdown編集。書式ボタンで記号を挿入します。");
             hint.style.fontSize = 12; hint.style.marginTop = 8; hint.style.marginBottom = 10;
             paper.Add(hint);
@@ -137,6 +140,10 @@ namespace Cartograph.EditorUI
             Button(paper, "M0検証欄の表示／非表示", () =>
                 probe.style.display = probe.style.display.value == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None);
             paper.Add(probe);
+            secondaryPane = new SecondaryNotePane(() => Composing,
+                (id, revision, text, origin) => ((ISecondaryNoteEditor)workspace).ApplySecondaryEdit(id, revision, text, origin),
+                () => secondaryPane.Hide());
+            editors.Add(secondaryPane);
 
             title.RegisterValueChangedCallback(_ => { if (!Composing) SubmitTitle(); });
             body.RegisterValueChangedCallback(_ => { UpdateCount(); if (!Composing) SubmitBody(ChangeOrigin.Typing); });
@@ -184,6 +191,7 @@ namespace Cartograph.EditorUI
             if (root == null || workspace == null || busy || Composing) return;
             // The frame after IME confirmation also submits the final value.
             SubmitTitle(); SubmitBody(ChangeOrigin.Typing);
+            secondaryPane.Tick();
             if (activeId != null && undoHistories.TryGetValue(activeId, out var history))
                 history.UpdateSelection(body.cursorIndex, body.selectIndex);
         }
@@ -220,7 +228,18 @@ namespace Cartograph.EditorUI
                 title.SetValueWithoutNotify(submittedTitle); body.SetValueWithoutNotify(submittedBody);
                 if (!undoHistories.ContainsKey(activeId)) undoHistories.Add(activeId, new TextUndoHistory(submittedBody));
             }
+            else if (current != null && !Composing && body.value == submittedBody && submittedBody != (current.markdown ?? ""))
+            {
+                // Same note edited in the other pane: synchronize its authoritative value.
+                int cursor = body.cursorIndex, selection = body.selectIndex;
+                submittedBody = current.markdown ?? "";
+                body.SetValueWithoutNotify(submittedBody);
+                body.SelectRange(Math.Min(cursor, submittedBody.Length), Math.Min(selection, submittedBody.Length));
+                undoHistories[activeId] = new TextUndoHistory(submittedBody);
+            }
             var documents = workspace.Documents;
+            if (secondaryPane.DocumentId != null)
+                secondaryPane.Refresh(documents.FirstOrDefault(d => d.id == secondaryPane.DocumentId));
             var navigation = workspace as IProjectNavigationSource;
             var entries = navigation?.Notes ?? documents.Select(d => new NoteTreeEntry(d.id, d.id + ".md", d.title)).ToArray();
             projectLabel.text = navigation?.ProjectName ?? "ノート";
@@ -247,11 +266,26 @@ namespace Cartograph.EditorUI
         private async void Run(Func<Task> action)
         {
             if (busy || Composing) return;
-            if (!SubmitTitle() || !SubmitBody(ChangeOrigin.Typing)) return;
+            if (!SubmitTitle() || !SubmitBody(ChangeOrigin.Typing) || !secondaryPane.Submit(ChangeOrigin.Typing)) return;
             busy = true; root.SetEnabled(false);
             try { await action(); Refresh(); }
             catch (Exception ex) { if (this != null) message.text = "操作に失敗しました：" + ex.Message; }
             finally { busy = false; if (this != null) root.SetEnabled(true); }
+        }
+
+        // Map integration entry point: one-based heading line, not a UTF-16 offset.
+        // Call on double-click only. Single-click selection stays in the map.
+        public void OpenNoteBeside(string documentId, int headingLine)
+        {
+            if (root == null || workspace == null) return;
+            Run(async () =>
+            {
+                if (headingLine < 1) throw new ArgumentOutOfRangeException(nameof(headingLine));
+                await workspace.FlushSave();
+                var document = workspace.Documents.FirstOrDefault(d => d.id == documentId);
+                if (document == null) throw new InvalidOperationException("開くノートが見つかりません。");
+                secondaryPane.Open(document, headingLine, workspace is ISecondaryNoteEditor);
+            });
         }
 
         private void WrapSelection(string marker)
