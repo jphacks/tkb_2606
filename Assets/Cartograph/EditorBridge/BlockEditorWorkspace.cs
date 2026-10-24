@@ -19,6 +19,7 @@ namespace Cartograph.EditorUI
         private readonly IReviewedNoteAccess access;
         private readonly string id;
         private readonly int blockIndex;
+        public Func<Tuple<int, int>> ReplacementSelection { get; set; }
         public BlockEditorWorkspace(IReviewingEditorWorkspace source, string id, int blockIndex)
         {
             this.source = source ?? throw new ArgumentNullException(nameof(source));
@@ -89,6 +90,14 @@ namespace Cartograph.EditorUI
                 SelEndBefore = SourceOffset(block, candidate.SelEndBefore),
                 Evidence = candidate.Evidence
             };
+            var range = ReplacementSelection?.Invoke();
+            if (range != null)
+            {
+                var inserted = TextDiff.Compute(block.DisplayText, candidate.NewText).Inserted;
+                int start = Math.Min(range.Item1, range.Item2), end = Math.Max(range.Item1, range.Item2);
+                mapped.NewText = raw.markdown.Remove(start, end - start).Insert(start, inserted);
+                mapped.SelStartBefore = start; mapped.SelEndBefore = end;
+            }
             var result = access.ReviewDocument(id, expectedRevision, mapped);
             if (result.Approved) return result;
             return new ReviewResult

@@ -108,6 +108,17 @@ namespace Cartograph.EditorUI
             Show(cancelButton);
         }
 
+        public void ShowCloseConfirmation(Func<Task> onSubmit)
+        {
+            if (busy) return;
+            heading.text = "未保存の内容があります";
+            description.text = "まだ保存が完了していない内容があります。保存してから閉じますか？\n保存に失敗した場合は、閉じずに内容を保持します。";
+            title.style.display = DisplayStyle.None;
+            submitButton.text = "保存して閉じる";
+            submit = onSubmit;
+            Show(cancelButton);
+        }
+
         private void Show(VisualElement focus)
         {
             if (!IsOpen) previousFocus = panel?.focusController.focusedElement as VisualElement;

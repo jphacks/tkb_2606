@@ -4,6 +4,9 @@ using System.Linq;
 using Cartograph.Core;
 using UnityEngine;
 using UnityEngine.UIElements;
+#if ENABLE_INPUT_SYSTEM
+using UnityEngine.InputSystem;
+#endif
 
 namespace Cartograph.EditorUI
 {
@@ -31,6 +34,15 @@ namespace Cartograph.EditorUI
         private int cursor, selection;
         private int pointerGeneration;
         private bool pointerSelecting;
+        private bool documentSelection, draggingDocument;
+        private int dragAnchor;
+        private readonly List<VisualElement> selectionPaint = new List<VisualElement>();
+        private readonly VisualElement selectionLayer;
+        private readonly VisualElement caret;
+        private string caretText;
+        private int caretIndex = -1;
+        private TextField caretField;
+        private float caretChangedAt;
         public event Action<string, int, int> Changed;
         public bool Enabled => access != null && id != null;
         public bool CanUndo => Enabled && history != null && history.CanUndo;
@@ -51,13 +63,87 @@ namespace Cartograph.EditorUI
             scroll = new ScrollView(ScrollViewMode.Vertical); scroll.style.flexGrow = 1;
             scroll.style.paddingLeft = 10; scroll.style.paddingRight = 10; scroll.style.paddingTop = 8;
             Add(scroll);
-            RegisterCallback<PointerDownEvent>(_ => { pointerGeneration++; pointerSelecting = true; }, TrickleDown.TrickleDown);
+            selectionLayer = new VisualElement { pickingMode = PickingMode.Ignore };
+            selectionLayer.style.position = Position.Absolute;
+            selectionLayer.style.left = selectionLayer.style.right = selectionLayer.style.top = selectionLayer.style.bottom = 0;
+            selectionLayer.style.overflow = Overflow.Hidden;
+            Add(selectionLayer);
+            caret = new VisualElement { pickingMode = PickingMode.Ignore };
+            caret.style.position = Position.Absolute; caret.style.width = 1.5f;
+            caret.style.backgroundColor = new Color(.55f, .91f, .95f, 1);
+            caret.style.display = DisplayStyle.None; selectionLayer.Add(caret);
+            schedule.Execute(UpdateCaretAndIme).Every(16);
+            RegisterCallback<PointerDownEvent>(evt =>
+            {
+                if (!Enabled || composing() || evt.button != 0) return;
+                var target = evt.target as VisualElement;
+                if (target != null && target.GetFirstAncestorOfType<Scroller>() != null) return;
+                if (!Submit(ChangeOrigin.Typing)) return;
+                documentSelection = false; ClearSelectionPaint();
+                dragAnchor = HitOffset(evt.position);
+                int row = BlockIndex(dragAnchor);
+                if (row < 0 || row >= rows.Count) return;
+                var block = blocks[row];
+                int local = DisplayOffset(block, dragAnchor - block.SourceStart);
+                rows[row].Field.Focus(); rows[row].Field.SelectRange(local, local);
+                cursor = selection = dragAnchor;
+                pointerGeneration++; pointerSelecting = draggingDocument = true;
+                this.CapturePointer(evt.pointerId);
+                // Own the gesture from the first event. Native text input would
+                // otherwise capture it and clamp selection to its single row.
+                panel?.focusController.IgnoreEvent(evt);
+#pragma warning disable CS0618
+                evt.PreventDefault(); // Also suppress compatibility mouse events on the row.
+#pragma warning restore CS0618
+                evt.StopImmediatePropagation();
+            }, TrickleDown.TrickleDown);
+            RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                if (!Enabled || !pointerSelecting || evt.pressedButtons == 0) return;
+                int at = HitOffset(evt.position);
+                evt.StopImmediatePropagation();
+                SelectDocument(dragAnchor, at);
+            }, TrickleDown.TrickleDown);
+            RegisterCallback<PointerUpEvent>(evt =>
+            {
+                if (!draggingDocument) return;
+                SelectDocument(dragAnchor, HitOffset(evt.position));
+                draggingDocument = false; this.ReleasePointer(evt.pointerId);
+                pointerSelecting = false; pointerGeneration++;
+                evt.StopImmediatePropagation();
+            }, TrickleDown.TrickleDown);
             RegisterCallback<PointerUpEvent>(_ => { pointerGeneration++; pointerSelecting = false; }, TrickleDown.TrickleDown);
             RegisterCallback<PointerCancelEvent>(_ => { pointerGeneration++; pointerSelecting = false; });
-            RegisterCallback<PointerCaptureOutEvent>(_ => pointerSelecting = false);
+            RegisterCallback<PointerCaptureOutEvent>(evt =>
+            {
+                // TextField captures the pointer itself. Its capture transitions
+                // bubble through this editor and must not cancel our drag.
+                if (ReferenceEquals(evt.target, this))
+                { pointerSelecting = false; draggingDocument = false; }
+            });
             RegisterCallback<KeyDownEvent>(evt =>
             {
                 if (!Enabled || composing()) return;
+                bool mod = evt.ctrlKey || evt.commandKey;
+                if (mod && evt.keyCode == KeyCode.S)
+                {
+                    panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
+                    SaveFromShortcut(); return;
+                }
+                if (mod && evt.keyCode == KeyCode.A)
+                {
+                    panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
+                    if (Submit(ChangeOrigin.Typing)) SelectDocument(0, raw.Length);
+                    return;
+                }
+                if (mod && evt.shiftKey && (evt.keyCode == KeyCode.Home || evt.keyCode == KeyCode.End))
+                {
+                    panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
+                    CaptureSelection();
+                    SelectDocument(documentSelection ? selection : cursor, evt.keyCode == KeyCode.Home ? 0 : raw.Length);
+                    return;
+                }
+                if (documentSelection && HandleDocumentKey(evt)) return;
                 if ((evt.ctrlKey || evt.commandKey) && !evt.shiftKey && (evt.keyCode == KeyCode.Home || evt.keyCode == KeyCode.End))
                 {
                     panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
@@ -89,6 +175,7 @@ namespace Cartograph.EditorUI
             if (!switched && HasPending) return;
             if (switched)
             {
+                documentSelection = draggingDocument = false; ClearSelectionPaint();
                 raw = document.markdown ?? "";
                 history = noteHistories.GetOrCreate(id, raw, access.GetLabeledDocument(id));
                 cursor = history.Current.Cursor; selection = history.Current.Selection;
@@ -121,6 +208,9 @@ namespace Cartograph.EditorUI
                     var field = new TextField { multiline = true, name = "rich-block-" + i };
                     field.textSelection.selectAllOnFocus = false;
                     field.textSelection.selectAllOnMouseUp = false;
+                    #pragma warning disable CS0618
+                    field.textSelection.cursorColor = Color.clear;
+                    #pragma warning restore CS0618
                     field.AddToClassList("rich-note-block");
                     field.style.whiteSpace = WhiteSpace.Normal;
                     field.style.fontSize = blocks[i].HeadingLevel == 1 ? 32 : blocks[i].HeadingLevel == 2 ? 26 : blocks[i].HeadingLevel > 0 ? 22 : 18;
@@ -133,9 +223,18 @@ namespace Cartograph.EditorUI
                         input.style.backgroundColor = Color.clear;
                         input.style.borderTopWidth = input.style.borderBottomWidth = input.style.borderLeftWidth = input.style.borderRightWidth = 0;
                         input.style.whiteSpace = WhiteSpace.Normal;
+                        input.style.fontSize = field.style.fontSize;
+                        input.style.paddingTop = input.style.paddingBottom = 0;
+                        input.style.minHeight = blocks[i].HeadingLevel == 1 ? 36 : blocks[i].HeadingLevel == 2 ? 30 : blocks[i].HeadingLevel > 0 ? 26 : 22;
                     }
+                    // Set the actual text element's metrics before an empty row
+                    // receives focus, so its caret never starts at theme-default size.
+                    foreach (var textElement in field.Query<TextElement>().ToList())
+                        textElement.style.fontSize = field.style.fontSize;
                     var facade = new BlockEditorWorkspace(source, id, i);
+                    facade.ReplacementSelection = () => documentSelection ? Tuple.Create(cursor, selection) : null;
                     int rowIndex = i;
+                    field.RegisterCallback<KeyDownEvent>(evt => InsertNewline(rowIndex, field, evt), TrickleDown.TrickleDown);
                     field.RegisterCallback<KeyDownEvent>(evt => JoinBoundary(rowIndex, field, evt), TrickleDown.TrickleDown);
                     field.RegisterCallback<KeyDownEvent>(evt =>
                     {
@@ -163,6 +262,10 @@ namespace Cartograph.EditorUI
             {
                 rows[i].Binding.Bind(rows[i].Workspace, rows[i].Workspace.Current);
                 rows[i].Field.style.display = blocks[i].IsRelatedLink ? DisplayStyle.None : DisplayStyle.Flex;
+                rows[i].Field.style.marginTop = 0;
+                rows[i].Field.style.marginBottom = blocks[i].HasSoftBreakAfter ? 0 : 13;
+                rows[i].Field.style.minHeight = blocks[i].HeadingLevel == 1 ? 36 : blocks[i].HeadingLevel == 2 ? 30 : blocks[i].HeadingLevel > 0 ? 26 : 22;
+                rows[i].Field.style.paddingTop = rows[i].Field.style.paddingBottom = 0;
             }
             if (rebuild && focused) QueueFocus(cursor, selection);
         }
@@ -182,8 +285,206 @@ namespace Cartograph.EditorUI
             var focused = panel?.focusController.focusedElement as VisualElement;
             return focused != null && Contains(focused);
         }
+        private int BlockIndex(int offset)
+        {
+            for (int i = 0; i < blocks.Count; i++)
+                if (offset <= blocks[i].SourceStart + blocks[i].SourceLength) return i;
+            return blocks.Count - 1;
+        }
+        private int HitOffset(Vector2 world)
+        {
+            int row = -1; float distance = float.MaxValue;
+            for (int i = 0; i < rows.Count; i++)
+            {
+                if (blocks[i].IsRelatedLink) continue;
+                var bounds = rows[i].Field.worldBound;
+                float d = world.y < bounds.yMin ? bounds.yMin - world.y : world.y > bounds.yMax ? world.y - bounds.yMax : 0;
+                if (d < distance) { row = i; distance = d; }
+            }
+            if (row < 0) return 0;
+            var field = rows[row].Field;
+            var input = field.Q<TextElement>() as VisualElement ?? field;
+            Vector2 local = input.WorldToLocal(world) - input.contentRect.position;
+            float lineHeight = SelectionLineHeight(field);
+            int best = 0; float nearest = float.MaxValue;
+            for (int i = 0; i <= blocks[row].DisplayText.Length; i++)
+            {
+                Vector2 pos = field.textSelection.GetCursorPositionFromStringIndex(i);
+                float vertical = local.y < pos.y - lineHeight ? pos.y - lineHeight - local.y : local.y > pos.y ? local.y - pos.y : 0;
+                float d = vertical * 1000 + Mathf.Abs(pos.x - local.x);
+                if (d < nearest) { nearest = d; best = i; }
+            }
+            return blocks[row].SourceStart + blocks[row].RawOffset(best);
+        }
+        private void ClearSelectionPaint()
+        {
+            foreach (var paint in selectionPaint) paint.RemoveFromHierarchy();
+            selectionPaint.Clear();
+        }
+        private static float SelectionLineHeight(TextField field)
+        {
+            var text = field.Q<TextElement>();
+            if (text != null)
+            {
+                float measured = text.MeasureTextSize("M", 0, VisualElement.MeasureMode.Undefined,
+                    0, VisualElement.MeasureMode.Undefined).y;
+                if (measured > 0 && !float.IsNaN(measured)) return measured;
+            }
+            return field.resolvedStyle.fontSize * 1.4f;
+        }
+        private void UpdateCaretAndIme()
+        {
+            caret.style.display = DisplayStyle.None;
+            if (!Enabled || panel == null) return;
+            var focused = panel.focusController.focusedElement as VisualElement;
+            var field = rows.Select(row => row.Field).FirstOrDefault(f => focused != null && (focused == f || f.Contains(focused)));
+            if (field == null) return;
+            var text = field.Q<TextElement>(); if (text == null || text.layout.width <= 0) return;
+            int at = Math.Max(0, Math.Min(field.cursorIndex, field.value.Length));
+            Vector2 p = field.textSelection.GetCursorPositionFromStringIndex(at);
+            float height = field.resolvedStyle.fontSize + 3;
+            Vector2 top = selectionLayer.WorldToLocal(text.LocalToWorld(new Vector2(
+                p.x + text.contentRect.x, p.y - SelectionLineHeight(field) + text.contentRect.y)));
+            if (caretField != field || caretIndex != at || caretText != field.value)
+            { caretField = field; caretIndex = at; caretText = field.value; caretChangedAt = Time.realtimeSinceStartup; }
+            caret.style.left = top.x; caret.style.top = top.y; caret.style.height = height;
+            bool visible = !documentSelection && field.cursorIndex == field.selectIndex &&
+                (composing() || (Time.realtimeSinceStartup - caretChangedAt) % 1.06f < .53f);
+            caret.style.display = visible ? DisplayStyle.Flex : DisplayStyle.None;
+#if ENABLE_INPUT_SYSTEM
+            // Input System expects upper-left pixel coordinates. Position the
+            // candidate window below the line, rather than over the typed text.
+            var bounds = panel.visualTree.worldBound;
+            if (Keyboard.current != null && bounds.width > 0 && bounds.height > 0)
+            {
+                Vector2 below = selectionLayer.LocalToWorld(new Vector2(top.x, top.y + height + 12));
+                Keyboard.current.SetIMECursorPosition(new Vector2(
+                    Mathf.Clamp((below.x - bounds.x) * Screen.width / bounds.width + 64, 0, Mathf.Max(0, Screen.width - 360)),
+                    Mathf.Clamp((below.y - bounds.y) * Screen.height / bounds.height, 0, Screen.height - 1)));
+            }
+#endif
+        }
+        private void SelectDocument(int anchor, int end)
+        {
+            cursor = end; selection = anchor; documentSelection = anchor != end;
+            ClearSelectionPaint();
+            if (!documentSelection)
+            {
+                // A simple click is a caret placement, not a range to paint.
+                // Do not clear every row's native selection to (0,0): Tick
+                // would read that back and move the caret to the line start.
+                FocusRaw(end, end);
+                history?.UpdateSelection(cursor, selection);
+                Changed?.Invoke(raw, cursor, selection);
+                return;
+            }
+            int start = Math.Min(anchor, end), stop = Math.Max(anchor, end);
+            for (int i = 0; i < rows.Count; i++)
+            {
+                var block = blocks[i]; if (block.IsRelatedLink) continue;
+                var field = rows[i].Field;
+                field.SelectRange(0, 0);
+                if (stop <= block.SourceStart || start > block.SourceStart + block.SourceLength) continue;
+                var input = field.Q<TextElement>() as VisualElement ?? field;
+                int a = DisplayOffset(block, Math.Max(0, start - block.SourceStart));
+                int b = DisplayOffset(block, Math.Min(block.SourceLength, stop - block.SourceStart));
+                for (int n = a; n < b;)
+                {
+                    Vector2 p = field.textSelection.GetCursorPositionFromStringIndex(n);
+                    int next = n + 1;
+                    Vector2 q = field.textSelection.GetCursorPositionFromStringIndex(next);
+                    while (next < b)
+                    {
+                        Vector2 candidate = field.textSelection.GetCursorPositionFromStringIndex(next + 1);
+                        if (candidate.y != p.y) break;
+                        q = candidate; next++;
+                    }
+                    var paint = new VisualElement { pickingMode = PickingMode.Ignore };
+                    Vector2 top = selectionLayer.WorldToLocal(input.LocalToWorld(
+                        new Vector2(p.x + input.contentRect.x, p.y - SelectionLineHeight(field) + input.contentRect.y)));
+                    paint.style.position = Position.Absolute; paint.style.left = top.x;
+                    float height = SelectionLineHeight(field);
+                    paint.style.top = top.y;
+                    paint.style.width = q.y == p.y ? Mathf.Max(1, q.x - p.x) : Mathf.Max(5, height / 2);
+                    paint.style.height = height;
+                    paint.style.backgroundColor = new Color(0.78f, .94f, .96f, .42f);
+                    selectionLayer.Add(paint); selectionPaint.Add(paint);
+                    n = next;
+                }
+            }
+            history?.UpdateSelection(cursor, selection);
+            Changed?.Invoke(raw, cursor, selection);
+        }
+        private bool HandleDocumentKey(KeyDownEvent evt)
+        {
+            bool mod = evt.ctrlKey || evt.commandKey;
+            string command = mod && evt.keyCode == KeyCode.C ? "Copy" : mod && evt.keyCode == KeyCode.X ? "Cut" :
+                (mod && evt.keyCode == KeyCode.V) || (evt.shiftKey && evt.keyCode == KeyCode.Insert) ? "Paste" : null;
+            bool deletion = evt.keyCode == KeyCode.Backspace || evt.keyCode == KeyCode.Delete;
+            bool newline = evt.keyCode == KeyCode.Return || evt.keyCode == KeyCode.KeypadEnter;
+            bool printable = !mod && !evt.altKey && !char.IsControl(evt.character) && evt.character != '\0';
+            if (command == null && !deletion && !newline && !printable)
+            {
+                if (evt.keyCode == KeyCode.Escape || evt.keyCode == KeyCode.LeftArrow || evt.keyCode == KeyCode.RightArrow)
+                { documentSelection = false; ClearSelectionPaint(); FocusRaw(cursor, cursor); }
+                return false;
+            }
+            panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
+            int start = Math.Min(cursor, selection), end = Math.Max(cursor, selection);
+            if (command == "Copy" || command == "Cut")
+            {
+                var text = new System.Text.StringBuilder(); var offsets = new List<int>();
+                foreach (var block in blocks)
+                {
+                    if (block.IsRelatedLink) continue;
+                    for (int n = 0; n < block.DisplayText.Length; n++)
+                    {
+                        int at = block.SourceStart + block.RawOffset(n);
+                        if (at >= start && at < end) { text.Append(block.DisplayText[n]); offsets.Add(at); }
+                    }
+                    int lf = block.SourceStart + block.SourceLength;
+                    if (lf >= start && lf < end && lf < raw.Length)
+                    { if (raw[lf] == '\r') lf++; text.Append('\n'); offsets.Add(lf); }
+                }
+                GUIUtility.systemCopyBuffer = text.ToString();
+                if (source is IProjectedCopyAccess projected) projected.NotifyProjectedCopied(id, text.ToString(), offsets);
+                else source.NotifyCopied(id, start, end - start);
+                if (command == "Copy") return true;
+            }
+            string inserted = command == "Paste" ? GUIUtility.systemCopyBuffer ?? "" : printable ? evt.character.ToString() : newline ? (evt.shiftKey ? "  \n" : "\n") : "";
+            processing = true;
+            try
+            {
+                string working = raw;
+                int steps = newline && evt.shiftKey ? inserted.Length : 1;
+                for (int step = 0; step < steps; step++)
+                {
+                    string piece = steps > 1 ? inserted[step].ToString() : inserted;
+                    int at = start + step;
+                    working = working.Remove(at, step == 0 ? end - start : 0).Insert(at, piece);
+                    var result = access.ReviewDocument(id, Find().revision, new ChangeCandidate
+                    {
+                        NewText = working, SelStartBefore = at, SelEndBefore = step == 0 ? end : at,
+                        Evidence = new InputEvidence { Kind = command == "Paste" ? EvidenceKind.Paste : EvidenceKind.Key, Text = piece }
+                    });
+                    if (!result.Approved) { notice(result.Reason); return true; }
+                }
+                documentSelection = false; ClearSelectionPaint(); cursor = selection = start + inserted.Length;
+                history.Record(Find().markdown, cursor, selection, access.GetLabeledDocument(id));
+                Render(Find(), true); QueueFocus(cursor, selection); Changed?.Invoke(raw, cursor, selection);
+            }
+            catch (Exception ex) { notice(ex.Message); }
+            finally { processing = false; }
+            return true;
+        }
+        private async void SaveFromShortcut()
+        {
+            try { if (Submit(ChangeOrigin.Typing)) await source.FlushSave(); }
+            catch (Exception ex) { notice("保存できませんでした：" + ex.Message); }
+        }
         private void CaptureSelection()
         {
+            if (documentSelection) return;
             for (int i = 0; i < rows.Count; i++)
             {
                 var focused = panel?.focusController.focusedElement as VisualElement;
@@ -227,6 +528,7 @@ namespace Cartograph.EditorUI
                 selection = MarkdownBlockProjection.MapSelectionOffset(selection, diff);
             }
             if (!replaying) history.Record(updated, cursor, selection, access.GetLabeledDocument(id));
+            documentSelection = false; ClearSelectionPaint();
             Render(current);
             if (!ownEdit && HasFocus()) FocusRaw(cursor, selection);
             Changed?.Invoke(raw, cursor, selection);
@@ -259,6 +561,46 @@ namespace Cartograph.EditorUI
             finally { processing = false; }
         }
         private DocumentRecord Find() => source.Documents.First(record => record.id == id);
+        private void InsertNewline(int index, TextField field, KeyDownEvent evt)
+        {
+            if (!Enabled || composing() || evt.ctrlKey || evt.commandKey || evt.altKey) return;
+            if (evt.keyCode != KeyCode.Return && evt.keyCode != KeyCode.KeypadEnter &&
+                evt.character != '\r' && evt.character != '\n') return;
+            panel?.focusController.IgnoreEvent(evt); evt.StopImmediatePropagation();
+            // A row facade projects only one line. A newline must be reviewed on
+            // the whole document before rebuilding rows, never fed back through
+            // the old one-line binding as an unexplained text change.
+            int localCursor = field.cursorIndex, localSelection = field.selectIndex;
+            if (!Submit(ChangeOrigin.Typing) || index >= blocks.Count) return;
+            var block = blocks[index];
+            int a = block.SourceStart + block.RawOffset(Math.Min(localCursor, block.DisplayText.Length));
+            int b = block.SourceStart + block.RawOffset(Math.Min(localSelection, block.DisplayText.Length));
+            int start = Math.Min(a, b), end = Math.Max(a, b);
+            processing = true;
+            try
+            {
+                var current = Find();
+                string inserted = evt.shiftKey ? "  \n" : "\n";
+                string updated = current.markdown;
+                for (int n = 0; n < inserted.Length; n++)
+                {
+                    int at = start + n;
+                    updated = updated.Remove(at, n == 0 ? end - start : 0).Insert(at, inserted[n].ToString());
+                    var result = access.ReviewDocument(id, Find().revision, new ChangeCandidate
+                    {
+                        NewText = updated, SelStartBefore = at, SelEndBefore = n == 0 ? end : at,
+                        Evidence = new InputEvidence { Kind = EvidenceKind.Key, Text = inserted[n].ToString() }
+                    });
+                    if (!result.Approved) { notice(result.Reason); return; }
+                }
+                cursor = selection = start + inserted.Length;
+                history.Record(Find().markdown, cursor, selection, access.GetLabeledDocument(id));
+                Render(Find(), true); QueueFocus(cursor, selection);
+                Changed?.Invoke(raw, cursor, selection);
+            }
+            catch (Exception ex) { notice("未保存です：" + ex.Message); }
+            finally { processing = false; }
+        }
         private void JoinBoundary(int index, TextField field, KeyDownEvent evt)
         {
             if (!Enabled || composing() || field.cursorIndex != field.selectIndex || evt.ctrlKey || evt.commandKey) return;
@@ -300,6 +642,12 @@ namespace Cartograph.EditorUI
         {
             if (!Enabled || rows.Count == 0) return;
             start = Math.Max(0, Math.Min(start, raw.Length)); end = Math.Max(0, Math.Min(end, raw.Length));
+            if (start != end && BlockIndex(start) != BlockIndex(end))
+            {
+                rows[BlockIndex(start)].Field.Focus();
+                SelectDocument(start, end); return;
+            }
+            documentSelection = false; ClearSelectionPaint();
             int index = blocks.Count - 1;
             for (int i = 0; i < blocks.Count; i++)
                 if (start <= blocks[i].SourceStart + blocks[i].SourceLength) { index = i; break; }
@@ -325,7 +673,9 @@ namespace Cartograph.EditorUI
         }
         public void Replay(bool redo)
         {
-            if (!Enabled || composing() || !Submit(ChangeOrigin.Typing) || (redo ? !CanRedo : !CanUndo)) return;
+            if (!Enabled || composing() || !Submit(ChangeOrigin.Typing)) return;
+            documentSelection = false; ClearSelectionPaint();
+            if (redo ? !CanRedo : !CanUndo) { FocusRaw(cursor, cursor); return; }
             var next = redo ? history.Redo() : history.Undo();
             var labels = (LabeledText)next.Metadata;
             var diff = TextDiff.Compute(raw, next.Text);
@@ -334,13 +684,15 @@ namespace Cartograph.EditorUI
             {
                 var result = access.ReviewDocument(id, Find().revision, new ChangeCandidate
                 {
-                    NewText = next.Text, SelStartBefore = cursor, SelEndBefore = selection,
+                    NewText = next.Text, SelStartBefore = diff.Pos, SelEndBefore = diff.Pos + diff.Deleted.Length,
                     Evidence = new InputEvidence { Kind = redo ? EvidenceKind.Redo : EvidenceKind.Undo, Text = diff.Inserted,
                         UndoLabels = labels.Slice(diff.Pos, diff.Inserted.Length) }
                 });
                 if (!result.Approved)
                 { if (redo) history.Undo(); else history.Redo(); notice(result.Reason); return; }
-                cursor = next.Cursor; selection = next.Selection; Render(Find(), true); FocusRaw(cursor, selection); Changed?.Invoke(raw, cursor, selection);
+                documentSelection = false; ClearSelectionPaint();
+                cursor = selection = Math.Max(0, Math.Min(next.Cursor, next.Text.Length));
+                Render(Find(), true); QueueFocus(cursor, selection); Changed?.Invoke(raw, cursor, selection);
             }
             catch (Exception ex) { if (redo) history.Undo(); else history.Redo(); notice(ex.Message); }
             finally { replaying = processing = false; }

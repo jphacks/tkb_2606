@@ -34,8 +34,19 @@ namespace Cartograph.EditorUI
         private readonly IFileSystem fileSystem;
         private ProjectWorkspace project;
         private string currentId;
+        private string bookTitle;
+        public string BookTitle => project == null ? "" : bookTitle;
+        public void UpdateBookTitle(string value)
+        {
+            if (project == null) throw new InvalidOperationException("先にプロジェクトを開いてください。");
+            value = (value ?? "").Trim();
+            if (value.Length == 0 || value.Contains("\n") || value.Contains("\r"))
+                throw new ArgumentException("題名を1行で入力してください。");
+            (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(Path.Combine(project.Root, ".cartograph", "book-title.txt"), value);
+            bookTitle = value; Notify();
+        }
         public ProjectEditorWorkspace(NoteSessionOptions options = null, IFileSystem fileSystem = null)
-        { this.options = options ?? new NoteSessionOptions(); this.fileSystem = fileSystem; }
+        { this.options = options ?? new NoteSessionOptions { SaveDebounceMs = 200 }; this.fileSystem = fileSystem; }
         public event Action Changed;
         public bool IsPersistent => true;
         public string ProjectRoot => project?.Root;
@@ -76,9 +87,11 @@ namespace Cartograph.EditorUI
         {
             await FlushSave();
             var next = ProjectWorkspace.Open(absoluteFolderPath, fileSystem, options);
+            string nextTitle = (fileSystem ?? new DiskFileSystem()).ReadAllText(Path.Combine(next.Root, ".cartograph", "book-title.txt"));
             if (project != null)
                 foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
             project = next; open.Clear(); currentId = null;
+            bookTitle = string.IsNullOrWhiteSpace(nextTitle) ? Path.GetFileName(next.Root) : nextTitle.Trim();
             var first = project.AllNotes().FirstOrDefault();
             if (first.IsValid) await OpenDocument(first.Value);
             Notify();

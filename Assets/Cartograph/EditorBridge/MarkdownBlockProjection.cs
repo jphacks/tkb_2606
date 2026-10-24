@@ -16,6 +16,7 @@ namespace Cartograph.EditorUI
         public string Raw { get; }
         public string DisplayText { get; }
         public int HeadingLevel { get; }
+        public bool HasSoftBreakAfter => Raw.EndsWith("  ", StringComparison.Ordinal);
         public bool IsRelatedLink => System.Text.RegularExpressions.Regex.IsMatch(Raw, @"^\s*\[\[[^\]\r\n]+\]\]\s*$");
         internal MarkdownBlock(int start, string raw, int prefix, int heading, string display, int[] offsets)
         { SourceStart = start; Raw = raw; prefixLength = prefix; HeadingLevel = heading; DisplayText = display; visibleOffsets = offsets; }
@@ -70,7 +71,8 @@ namespace Cartograph.EditorUI
                 int skip = prefix.Success ? prefix.Length : 0;
                 int heading = prefix.Success ? prefix.Groups[2].Length : 0;
                 var display = new StringBuilder(); var offsets = new List<int>();
-                ProjectInline(line, skip, line.Length, display, offsets);
+                int displayEnd = line.EndsWith("  ", StringComparison.Ordinal) ? line.Length - 2 : line.Length;
+                ProjectInline(line, skip, Math.Max(skip, displayEnd), display, offsets);
                 blocks.Add(new MarkdownBlock(start, line, skip, heading, display.ToString(), offsets.ToArray()));
                 if (end == raw.Length) break;
                 start = end + 1;

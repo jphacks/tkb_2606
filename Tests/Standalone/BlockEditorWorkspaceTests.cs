@@ -10,6 +10,71 @@ namespace Cartograph.IntegrationTests
     public sealed class BlockEditorWorkspaceTests
     {
         [Test]
+        public async Task UndoUsesEditDiffInsteadOfTheLaterSelectAllRange()
+        {
+            var env = new Env(); env.PutNote("A", "abc\ndef");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            var original = source.GetLabeledDocument("A");
+            Assert.That(source.ReviewDocument("A", source.Current.revision, new ChangeCandidate
+            { NewText = "abc\ndefX", SelStartBefore = 7, SelEndBefore = 7,
+                Evidence = new InputEvidence { Kind = EvidenceKind.Key, Text = "X" } }).Approved, Is.True);
+            var diff = TextDiff.Compute(source.Current.markdown, original.Text);
+            var undo = source.ReviewDocument("A", source.Current.revision, new ChangeCandidate
+            {
+                NewText = original.Text, SelStartBefore = diff.Pos, SelEndBefore = diff.Pos + diff.Deleted.Length,
+                Evidence = new InputEvidence { Kind = EvidenceKind.Undo, Text = diff.Inserted,
+                    UndoLabels = original.Slice(diff.Pos, diff.Inserted.Length) }
+            });
+            Assert.That(undo.Approved, Is.True);
+            Assert.That(source.Current.markdown, Is.EqualTo("abc\ndef"));
+            await source.FlushSave();
+        }
+        [Test]
+        public async Task ImeReplacementSpansMultipleRowsWithoutChangingOtherText()
+        {
+            var env = new Env(); env.PutNote("A", "abc\ndef\nghi");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            var block = new BlockEditorWorkspace(source, "A", 0);
+            block.ReplacementSelection = () => Tuple.Create(1, 6);
+            var result = block.ReviewDocument("A", source.Current.revision, new ChangeCandidate
+            {
+                NewText = "日本語abc", SelStartBefore = 0, SelEndBefore = 0,
+                Evidence = new InputEvidence { Kind = EvidenceKind.ImeCommit, Text = "日本語" }
+            });
+            Assert.That(result.Approved, Is.True);
+            Assert.That(source.Current.markdown, Is.EqualTo("a日本語f\nghi"));
+            await source.FlushSave();
+        }
+        [Test]
+        public async Task MultiRowReplacementStillRejectsExternalPaste()
+        {
+            var env = new Env(); env.PutNote("A", "abc\ndef");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            var block = new BlockEditorWorkspace(source, "A", 0);
+            block.ReplacementSelection = () => Tuple.Create(0, 7);
+            var result = block.ReviewDocument("A", source.Current.revision, new ChangeCandidate
+            { NewText = "外部abc", Evidence = new InputEvidence { Kind = EvidenceKind.Paste } });
+            Assert.That(result.Approved, Is.False);
+            Assert.That(source.Current.markdown, Is.EqualTo("abc\ndef"));
+            await source.FlushSave();
+        }
+        [Test]
+        public async Task BookTitlePersistsIndependentlyOfChapterNames()
+        {
+            var env = new Env(); env.PutNote("第一章", "本文");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs);
+            await source.OpenProject(env.Paths.Root);
+            source.UpdateBookTitle("わたしの本");
+            Assert.That(source.Current.title, Is.EqualTo("第一章"));
+            await source.RenameDocument("第一章", "はじまり");
+            Assert.That(source.BookTitle, Is.EqualTo("わたしの本"));
+            var reopened = new ProjectEditorWorkspace(env.Options, env.Fs);
+            await reopened.OpenProject(env.Paths.Root);
+            Assert.That(reopened.BookTitle, Is.EqualTo("わたしの本"));
+            Assert.That(reopened.Current.title, Is.EqualTo("はじまり"));
+            await source.FlushSave(); await reopened.FlushSave();
+        }
+        [Test]
         public async Task HeadingEditPreservesRawPrefixAndTypedProvenance()
         {
             var env = new Env(); env.PutNote("A", "before\n## **見出し**\nafter");

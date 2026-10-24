@@ -161,3 +161,9 @@
 .cartowords .rich-note-block { margin-left: 0; margin-right: 0; flex-shrink: 0; }
 .cartowords .rich-note-block .unity-text-field__input { background-color: rgba(0, 0, 0, 0); border-width: 0; padding: 3px 5px; }
 .cartowords .rich-note-block .unity-text-field__input:focus { border-width: 0; }
+/* RichNoteEditor draws one blinking caret; suppress the native caret after
+   theme resolution as well as at runtime. */
+.cartowords .rich-note-editor .rich-note-block .unity-text-field__input,
+.cartowords .rich-note-editor .rich-note-block .unity-text-field__input:focus {
+    --unity-cursor-color: rgba(0, 0, 0, 0);
+}
