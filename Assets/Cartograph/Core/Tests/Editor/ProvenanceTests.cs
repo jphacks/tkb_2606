@@ -78,7 +78,7 @@ namespace Cartograph.Core.Tests
                         origins.Add(o);
                         labels.Add(new Run(1, o));
                     }
-                    t.Insert(pos, chars, new LabeledSlice(labels));
+                    t.Insert(pos, chars, LabeledSlice.FromRuns(labels));
                     model.InsertRange(pos, chars.Select((c, i) => (c, origins[i])));
                 }
                 else

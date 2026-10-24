@@ -46,6 +46,13 @@ namespace Cartograph.Core
             Length = total;
         }
 
+        /// <summary>区間の並びから作る。長さ 0 の区間は捨て、同じ来歴が続けばまとめる。</summary>
+        public static LabeledSlice FromRuns(IEnumerable<Run> runs)
+        {
+            if (runs == null) throw new ArgumentNullException(nameof(runs));
+            return new LabeledSlice(new List<Run>(runs));
+        }
+
         public static LabeledSlice Uniform(int length, Origin origin)
         {
             if (length < 0) throw new ArgumentOutOfRangeException(nameof(length));

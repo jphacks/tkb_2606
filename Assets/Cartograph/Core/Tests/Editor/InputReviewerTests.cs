@@ -81,7 +81,7 @@ namespace Cartograph.Core.Tests
         public void 別のノートから貼り付けると元のラベルと貼り付け元が残る()
         {
             var clip = new InternalClipboard();
-            var labels = new LabeledSlice(new System.Collections.Generic.List<Run> { new Run(2, Origin.Typed), new Run(1, Origin.Unknown) });
+            var labels = LabeledSlice.FromRuns(new[] { new Run(2, Origin.Typed), new Run(1, Origin.Unknown) });
             clip.Set("元ノート", 5, "abc", labels);
 
             var r = InputReviewer.Review("", "貼り先", Cand("abc", 0, 0, Ev(EvidenceKind.Paste)), clip);
@@ -97,7 +97,7 @@ namespace Cartograph.Core.Tests
         [Test]
         public void 元に戻すは許可され_元のラベルを復元する()
         {
-            var labels = new LabeledSlice(new System.Collections.Generic.List<Run> { new Run(1, Origin.Unknown), new Run(1, Origin.Typed) });
+            var labels = LabeledSlice.FromRuns(new[] { new Run(1, Origin.Unknown), new Run(1, Origin.Typed) });
             var ev = new InputEvidence { Kind = EvidenceKind.Undo, Text = "xy", UndoLabels = labels };
             var r = InputReviewer.Review("", "n", Cand("xy", 0, 0, ev), null);
             Assert.IsTrue(r.Approved);
