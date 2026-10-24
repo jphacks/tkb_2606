@@ -16,9 +16,18 @@ namespace Cartograph.MapUI
         public readonly Sprite[] Wall, Ground, Border, BorderInner;
         public readonly Sprite[][] Flags, Flowers;
         public readonly Sprite[] Withered;
+        public readonly Sprite[] FogAnim, FogTile, Marks, Collapse, PathPlain, OverlayPremise, OverlayContrast, OverlayExample;
 
         MapArt()
         {
+            FogAnim = Load("Fog/anim_fog");
+            FogTile = Load("Fog/tile_fog");
+            Marks = new[] { Single("Marks/mark_noreason"), Single("Marks/mark_broken"), Single("Marks/mark_isolated") };
+            Collapse = Load("Collapse/anim_wall_collapse");
+            PathPlain = Load("Tiles/Path/path_plain");
+            OverlayPremise = Load("Tiles/Path/overlay_premise");
+            OverlayContrast = Load("Tiles/Path/overlay_contrast");
+            OverlayExample = Load("Tiles/Path/overlay_example");
             Wall = Load("Tiles/Brick/tile_wall");
             Ground = Load("Tiles/Grass/tile_ground");
             Border = Load("Tiles/Grass/tile_border");
@@ -35,6 +44,8 @@ namespace Cartograph.MapUI
             }
         }
 
+        static Sprite Single(string path) => Resources.Load<Sprite>("MapArt/" + path);
+
         // 切り分けたコマを、左上から右へ(番号順)に並べて返す。
         static Sprite[] Load(string path)
         {
@@ -50,6 +61,7 @@ namespace Cartograph.MapUI
         }
 
         public bool HasTiles => Wall.Length > 0 && Ground.Length > 0 && Border.Length >= 16;
+        public bool HasPaths => PathPlain.Length >= 16;
         public Sprite[] FlagFor(int hash) => Flags[hash % Flags.Length];
     }
 }

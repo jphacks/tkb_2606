@@ -15,6 +15,8 @@ namespace Cartograph.MapUI
             public readonly Color32 Color;
             public Quad(Rect rect, Color32 color) { Rect = rect; Color = color; }
         }
+        // 目印の中心の、拠点からの世界座標でのずれ(旗の右上)。
+        private static readonly Vector2 MarkOffset = new Vector2(14, -18);
         private readonly MapViewport viewport = new MapViewport();
         private readonly MapTouchGesture touchGesture = new MapTouchGesture();
         private readonly VisualElement labels = new VisualElement { pickingMode = PickingMode.Ignore };
@@ -28,6 +30,11 @@ namespace Cartograph.MapUI
         private Dictionary<string, MapPoint> positions = new Dictionary<string, MapPoint>();
         private readonly HashSet<long> land = new HashSet<long>();
         private int frame;
+        // 道のマス: 道が伸びる向きの組み合わせ(上=1 右=2 下=4 左=8)と、種別の重ね絵(向きは 0上 1右 2下 3左)。
+        private readonly Dictionary<long, int> pathMask = new Dictionary<long, int>();
+        private readonly Dictionary<long, KeyValuePair<RoadKind, int>> pathKind = new Dictionary<long, KeyValuePair<RoadKind, int>>();
+        // 壁から土地に変わったマスと、崩れ始めたコマ番号。
+        private readonly Dictionary<long, int> collapsing = new Dictionary<long, int>();
         private readonly Dictionary<string, MapNode> nodes = new Dictionary<string, MapNode>();
         private string selected, lastClick;
         private float lastClickAt;
@@ -45,7 +52,14 @@ namespace Cartograph.MapUI
             labels.style.right = labels.style.bottom = 0; Add(labels);
             generateVisualContent += Draw;
             // 花と旗のアニメ。拡大率が小さい(描く数が多い)時は止めて、再描画を増やさない。
-            schedule.Execute(() => { frame++; if (viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) MarkDirtyRepaint(); }).Every(140);
+            schedule.Execute(() =>
+            {
+                frame++;
+                int length = MapArt.Instance.Collapse.Length;
+                if (collapsing.Count > 0)
+                    foreach (long key in collapsing.Where(p => frame - p.Value >= length).Select(p => p.Key).ToList()) collapsing.Remove(key);
+                if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || collapsing.Count > 0) MarkDirtyRepaint();
+            }).Every(140);
             RegisterCallback<GeometryChangedEvent>(_ =>
             { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
             RegisterCallback<PointerDownEvent>(evt =>
@@ -101,7 +115,8 @@ namespace Cartograph.MapUI
             bool firstData = snapshot == null || snapshot.Nodes.Count == 0;
             snapshot = value; lastClick = null;
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
-            nodes.Clear(); land.Clear();
+            var before = new HashSet<long>(land);
+            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear();
             positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
             if (value != null)
             {
@@ -115,26 +130,43 @@ namespace Cartograph.MapUI
                         if (x * x + y * y <= radius * radius + radius)
                             PutLand(cx + x, cy + y);
                 }
-                foreach (var edge in value.Roads) Carve(positions[edge.From], positions[edge.To]);
+                foreach (var edge in value.Roads) Carve(edge, positions[edge.From], positions[edge.To]);
+                if (before.Count > 0)
+                    foreach (long key in land) if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame;
             }
+            foreach (long key in collapsing.Keys.Where(k => !land.Contains(k)).ToList()) collapsing.Remove(key);
             pendingFit = firstData;
             if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
             Repaint();
         }
         private static long Key(int x, int y) => ((long)x << 32) | (uint)y;
         private void PutLand(int x, int y) => land.Add(Key(x, y));
-        private void Carve(MapPoint a, MapPoint b)
+        // 2つの拠点のマスを上下左右だけでたどり、土地を開いて、道のマスの向きを記録する。
+        private void Carve(MapRoad edge, MapPoint a, MapPoint b)
         {
             int x = (int)(a.X / MapLayout.Tile), y = (int)(a.Y / MapLayout.Tile);
             int ex = (int)(b.X / MapLayout.Tile), ey = (int)(b.Y / MapLayout.Tile);
             int dx = Math.Abs(ex - x), dy = Math.Abs(ey - y), sx = x < ex ? 1 : -1, sy = y < ey ? 1 : -1, error = dx - dy;
-            for (int step = 0; step <= dx + dy; step++)
+            var cells = new List<Vector2Int> { new Vector2Int(x, y) };
+            for (int guard = 0; (x != ex || y != ey) && guard <= dx + dy + 2; guard++)
             {
-                PutLand(x, y);
-                if (x == ex && y == ey) break;
                 int twice = 2 * error;
-                if (twice > -dy) { error -= dy; x += sx; }
-                if (twice < dx) { error += dx; y += sy; }
+                if (twice > -dy && twice < dx) { error -= dy; x += sx; cells.Add(new Vector2Int(x, y)); error += dx; y += sy; }
+                else if (twice > -dy) { error -= dy; x += sx; }
+                else { error += dx; y += sy; }
+                cells.Add(new Vector2Int(x, y));
+            }
+            for (int i = 0; i < cells.Count; i++)
+            {
+                PutLand(cells[i].x, cells[i].y);
+                if (i + 1 >= cells.Count) break;
+                var step = cells[i + 1] - cells[i];
+                int dir = step.y < 0 ? 0 : step.x > 0 ? 1 : step.y > 0 ? 2 : 3;
+                long from = Key(cells[i].x, cells[i].y), to = Key(cells[i + 1].x, cells[i + 1].y);
+                pathMask[from] = (pathMask.TryGetValue(from, out int m1) ? m1 : 0) | (1 << dir);
+                pathMask[to] = (pathMask.TryGetValue(to, out int m2) ? m2 : 0) | (1 << ((dir + 2) % 4));
+                // 重ね絵は道の途中のマスだけ(両端の拠点のマスには載せない)。
+                if (i > 0 && !edge.Auto && edge.Kind != RoadKind.Unspecified) pathKind[from] = new KeyValuePair<RoadKind, int>(edge.Kind, dir);
             }
         }
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
@@ -151,8 +183,8 @@ namespace Cartograph.MapUI
             if (snapshot == null) return;
             foreach (var mark in snapshot.Marks)
             {
-                var p = viewport.Screen(positions[mark.Node]);
-                if ((new Vector2(p.X + 13, p.Y - 17) - at).sqrMagnitude < 100)
+                var p = viewport.Screen(positions[mark.Node]); float s = viewport.Scale, reach = Mathf.Max(10, 12 * s);
+                if ((new Vector2(p.X + MarkOffset.x * s, p.Y + MarkOffset.y * s) - at).sqrMagnitude < reach * reach)
                 { selected = mark.Node; lastClick = null; MarkSelected?.Invoke(mark.Message); Repaint(); return; }
             }
             string closest = null; float distance = 24 * 24;
@@ -220,7 +252,8 @@ namespace Cartograph.MapUI
         {
             var quads = new List<Quad>();
             var art = MapArt.Instance; var sprites = new List<SpriteDraw>();
-            if (art.HasTiles) AddTerrain(sprites, quads, art);
+            var overlays = new List<SpriteDraw>();
+            if (art.HasTiles) AddTerrain(sprites, overlays, quads, art);
             else
             {
                 // 素材が読めない時の代用(色つきの四角)。
@@ -229,8 +262,11 @@ namespace Cartograph.MapUI
                     WorldQuad(quads, (int)(key >> 32) * MapLayout.Tile, (int)(uint)key * MapLayout.Tile, MapLayout.Tile - 0.6f, new Color32(60, 96, 91, 255));
             }
             Flush(context, quads); quads.Clear(); FlushSprites(context, sprites); sprites.Clear();
+            FlushSprites(context, overlays); overlays.Clear();
             if (snapshot == null) return;
             var painter = context.painter2D;
+            // 道の絵が読めない時だけ、線で代用する。
+            if (!(art.HasTiles && art.HasPaths))
             foreach (var edge in snapshot.Roads)
             {
                 var a = viewport.Screen(positions[edge.From]); var b = viewport.Screen(positions[edge.To]);
@@ -257,9 +293,16 @@ namespace Cartograph.MapUI
             {
                 var p = positions[fog.Node];
                 int radius = MapLayout.LandRadius(nodes[fog.Node].TypedChars);
+                var fogFrames = art.FogAnim.Length > 0 ? art.FogAnim : art.FogTile;
                 for (int x = -Math.Min(1, radius); x <= Math.Min(1, radius); x++)
-                    WorldQuad(quads, p.X + x * MapLayout.Tile, p.Y, MapLayout.Tile, new Color32(181, 193, 208, 125));
+                {
+                    if (fogFrames.Length == 0)
+                    { WorldQuad(quads, p.X + x * MapLayout.Tile, p.Y, MapLayout.Tile, new Color32(181, 193, 208, 125)); continue; }
+                    int cx = (int)(p.X / MapLayout.Tile) + x, cy = (int)(p.Y / MapLayout.Tile);
+                    AddTile(sprites, cx, cy, fogFrames[(frame + MapLayout.StableHash(fog.Node + ":" + fog.Line)) % fogFrames.Length]);
+                }
             }
+            FlushSprites(context, sprites); sprites.Clear();
             foreach (var node in snapshot.Nodes)
                 if (node.Id == selected)
                 { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 14, p.Y - 14, 28, 28, new Color32(86, 210, 218, 255)); }
@@ -268,11 +311,13 @@ namespace Cartograph.MapUI
             AddFlags(sprites, quads, art); FlushSprites(context, sprites); sprites.Clear();
             foreach (var mark in snapshot.Marks)
             {
-                var p = viewport.Screen(positions[mark.Node]);
+                var at = positions[mark.Node]; var markSprite = art.Marks[(int)mark.Kind];
+                if (markSprite != null) { AddAnchored(sprites, at.X + MarkOffset.x, at.Y + MarkOffset.y + MapLayout.Tile / 2, markSprite); continue; }
+                var p = viewport.Screen(at);
                 var gold = new Color32(255, 208, 106, 255);
                 AddQuad(quads, p.X + 11, p.Y - 23, 4, 9, gold); AddQuad(quads, p.X + 11, p.Y - 11, 4, 3, gold);
             }
-            Flush(context, quads);
+            Flush(context, quads); FlushSprites(context, sprites);
         }
         private readonly struct SpriteDraw
         {
@@ -300,7 +345,7 @@ namespace Cartograph.MapUI
             if (!rect.Overlaps(contentRect)) return false;
             sprites.Add(new SpriteDraw(rect, sprite)); return true;
         }
-        private void AddTerrain(List<SpriteDraw> sprites, List<Quad> quads, MapArt art)
+        private void AddTerrain(List<SpriteDraw> sprites, List<SpriteDraw> overlays, List<Quad> quads, MapArt art)
         {
             float tile = MapLayout.Tile;
             var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(contentRect.width, contentRect.height));
@@ -321,6 +366,14 @@ namespace Cartograph.MapUI
                 int mask = (land.Contains(Key(x, y - 1)) ? 0 : 1) | (land.Contains(Key(x + 1, y)) ? 0 : 2)
                     | (land.Contains(Key(x, y + 1)) ? 0 : 4) | (land.Contains(Key(x - 1, y)) ? 0 : 8);
                 Sprite sprite;
+                if (art.HasPaths && pathMask.TryGetValue(key, out int open))
+                {
+                    AddTile(sprites, x, y, art.PathPlain[open]);
+                    AddPathOverlay(overlays, key, x, y, open, art);
+                    continue;
+                }
+                if (collapsing.TryGetValue(key, out int started) && frame - started < art.Collapse.Length)
+                { AddTile(sprites, x, y, art.Collapse[frame - started]); continue; }
                 if (mask != 0) sprite = art.Border[mask];
                 else
                 {
@@ -331,6 +384,17 @@ namespace Cartograph.MapUI
                 }
                 AddTile(sprites, x, y, sprite);
             }
+        }
+        // 種別の重ね絵は、まっすぐ(縦5・横10)のマスだけに載せる。
+        private void AddPathOverlay(List<SpriteDraw> overlays, long key, int x, int y, int open, MapArt art)
+        {
+            if ((open != 5 && open != 10) || !pathKind.TryGetValue(key, out var kind)) return;
+            bool vertical = open == 5;
+            if (vertical != (kind.Value == 0 || kind.Value == 2)) return;
+            Sprite[] frames = kind.Key == RoadKind.Premise ? art.OverlayPremise
+                : kind.Key == RoadKind.Contrast ? art.OverlayContrast : art.OverlayExample;
+            int index = kind.Key == RoadKind.Premise ? kind.Value : vertical ? 1 : 0;
+            if (index < frames.Length) AddTile(overlays, x, y, frames[index]);
         }
         private void AddFlowers(List<SpriteDraw> sprites, MapArt art)
         {
