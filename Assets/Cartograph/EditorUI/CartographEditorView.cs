@@ -152,13 +152,14 @@ namespace Cartograph.EditorUI
             var deleteLabel = new Label(); deleteLabel.style.whiteSpace = WhiteSpace.Normal;
             string deleteId = null;
             object deleteTree = null;
-            Button(sidebar, "ノートを削除", () =>
+            Action<string> requestDelete = id =>
             {
-                if (workspace.Current == null) return;
-                deleteId = workspace.Current.id; deleteLabel.text = "「" + workspace.Current.title + "」を削除しますか？";
+                var record = workspace.Documents.FirstOrDefault(d => d.id == id);
+                if (record == null) return;
+                deleteId = id; deleteLabel.text = "「" + record.title + "」を削除しますか？";
                 deleteTree = (workspace as IReviewingEditorWorkspace)?.Tree;
                 deleteConfirmation.style.display = DisplayStyle.Flex;
-            });
+            };
             deleteConfirmation.Add(deleteLabel);
             Button(deleteConfirmation, "削除する", () => Run(async () =>
             {
@@ -177,6 +178,7 @@ namespace Cartograph.EditorUI
             var scroll = new ScrollView(); scroll.style.flexGrow = 1;
             sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
+            noteTree.DeleteRequested += requestDelete;
             noteTree.NoteSelected += id => Run(async () =>
             { await workspace.FlushSave(); await workspace.OpenDocument(id); });
 
@@ -471,8 +473,10 @@ namespace Cartograph.EditorUI
             mapRequestJob = root.schedule.Execute(() =>
             {
                 if (this == null || workspace == null) return;
+                if (busy || Composing) { mapVersionSignature = null; QueueMapRequest(workspace.Documents); return; }
                 var request = new MapRequest(mapProjectKey, ++mapGeneration, MapVersions());
                 MapRefreshRequested?.Invoke(request);
+                AnalyzeMap(request);
             }).StartingIn(500);
         }
         // Analyzer adapter publishes a COMPLETE snapshot on the UI thread, or this
@@ -484,6 +488,19 @@ namespace Cartograph.EditorUI
             if (this == null || workspace == null || mapPanel == null || snapshot == null ||
                 snapshot.Request.Generation != mapGeneration || !mapGate.TryAccept(snapshot, MapVersions())) return;
             mapPanel.Present(snapshot);
+        }
+        private async void AnalyzeMap(MapRequest request)
+        {
+            if (!(workspace is ProjectEditorWorkspace source) || source.Tree == null) return;
+            bool Current() => this != null && ReferenceEquals(workspace, source) &&
+                mapProjectKey == request.ProjectKey && mapGeneration == request.Generation;
+            try
+            {
+                var snapshot = await MapAnalysisAdapter.Analyze(source, request, Current);
+                if (Current()) PresentMap(snapshot);
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { if (Current()) mapPanel.ShowError("マップを更新できません：" + ex.Message); }
         }
         public void SetFlowerColor(Emotion emotion, Color32 color) => mapPanel?.SetFlowerColor(emotion, color);
 
@@ -587,7 +604,7 @@ namespace Cartograph.EditorUI
 
         private void UpdateCount()
         {
-            count.text = $"{new StringInfo(body.value ?? "").LengthInTextElements:N0} 文字（Markdown記号を含む）";
+            count.text = $"{MarkdownTextCount.Count(body.value):N0} 文字（記号・改行を除く）";
         }
 
         private void UpdateSaveStatus()

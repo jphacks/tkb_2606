@@ -43,12 +43,13 @@ namespace Cartowords.MapPresentation
         {
             unchecked { uint hash = 2166136261; foreach (char c in text) hash = (hash ^ c) * 16777619; return (int)(hash & 0x7fffffff); }
         }
-        public static Dictionary<string, MapPoint> Solve(MapSnapshot snapshot)
+        public static Dictionary<string, MapPoint> Solve(MapSnapshot snapshot, IReadOnlyDictionary<string, MapPoint> previous = null)
         {
             var nodes = snapshot.Nodes.OrderBy(n => n.Id, StringComparer.Ordinal).ToArray();
             int count = nodes.Length;
             var towns = nodes.Select(n => n.Town).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToArray();
             var x = new float[count]; var y = new float[count]; var ax = new float[count]; var ay = new float[count];
+            var pinned = new bool[count];
             var index = new Dictionary<string, int>(StringComparer.Ordinal);
             for (int i = 0; i < count; i++)
             {
@@ -60,6 +61,8 @@ namespace Cartowords.MapPresentation
                 double seed = StableHash(nodes[i].Id) * 0.001;
                 x[i] = ax[i] + (float)Math.Cos(seed) * (80 + i % 7 * 24);
                 y[i] = ay[i] + (float)Math.Sin(seed) * (80 + i % 11 * 18);
+                if (previous != null && previous.TryGetValue(nodes[i].Id, out var point))
+                { x[i] = point.X; y[i] = point.Y; pinned[i] = true; }
             }
             // Bounded layout work: never runs each frame. Rendering uses its cached result.
             for (int step = 0; step < 28; step++)
@@ -86,12 +89,17 @@ namespace Cartowords.MapPresentation
                     dx[a] += vx * pull; dy[a] += vy * pull; dx[b] -= vx * pull; dy[b] -= vy * pull;
                 }
                 for (int i = 0; i < count; i++)
-                { x[i] += Math.Max(-18, Math.Min(18, dx[i])); y[i] += Math.Max(-18, Math.Min(18, dy[i])); }
+                { if (pinned[i]) continue; x[i] += Math.Max(-18, Math.Min(18, dx[i])); y[i] += Math.Max(-18, Math.Min(18, dy[i])); }
             }
             var result = new Dictionary<string, MapPoint>(StringComparer.Ordinal);
             var occupied = new HashSet<string>(StringComparer.Ordinal);
+            if (previous != null)
+                foreach (var node in nodes)
+                    if (previous.TryGetValue(node.Id, out var point))
+                    { result[node.Id] = point; occupied.Add((int)Math.Round(point.X / Tile) + ":" + (int)Math.Round(point.Y / Tile)); }
             for (int i = 0; i < count; i++)
             {
+                if (result.ContainsKey(nodes[i].Id)) continue;
                 int tx = (int)Math.Round(x[i] / Tile), ty = (int)Math.Round(y[i] / Tile);
                 // Stable, bounded collision resolution at tile resolution.
                 while (!occupied.Add(tx + ":" + ty)) tx++;

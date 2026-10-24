@@ -149,3 +149,5 @@
 .cartowords .sidebar .unity-button { font-size: 11px; padding: 4px 5px; }
 .cartowords .sidebar .primary-action { margin-bottom: 6px; }
 .cartowords .sidebar .section-label { margin-top: 4px; margin-bottom: 4px; }
+.cartowords .note-mini-menu { background-color: rgb(34, 43, 58); border-width: 1px; border-color: rgb(76, 100, 119); border-radius: 5px; padding: 4px; margin-bottom: 5px; }
+.cartowords .note-mini-menu .unity-button { -unity-text-align: middle-left; }

@@ -48,6 +48,7 @@ namespace Cartograph.MapUI
             info.text = snapshot == null ? "解析データ待ち" : snapshot.Nodes.Count + " 拠点 / ドラッグで移動・ダブルクリックで開く";
         }
         public void Waiting() { if (!isPreview) info.text = "解析データ待ち / 表示サンプルでマップ操作を確認できます"; }
+        public void ShowError(string message) { info.text = message; }
         public void SetFlowerColor(Emotion emotion, UnityEngine.Color32 color) => canvas.SetFlowerColor(emotion, color);
         private static MapSnapshot Sample()
         {

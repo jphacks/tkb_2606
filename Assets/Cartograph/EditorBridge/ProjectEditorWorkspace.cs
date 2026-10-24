@@ -85,7 +85,13 @@ namespace Cartograph.EditorUI
         public async Task<DocumentRecord> LoadDocument(string id)
         {
             if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
-            if (!open.ContainsKey(id)) Attach(await project.OpenNote(NotePath.Parse(id)));
+            if (!open.ContainsKey(id))
+            {
+                var source = project;
+                var session = await source.OpenNote(NotePath.Parse(id));
+                if (!ReferenceEquals(source, project)) throw new OperationCanceledException("プロジェクトが変わりました。");
+                if (!open.ContainsKey(id)) Attach(session);
+            }
             return Record(Require(id));
         }
         public async Task OpenDocument(string id)

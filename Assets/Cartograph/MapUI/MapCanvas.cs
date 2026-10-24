@@ -85,7 +85,7 @@ namespace Cartograph.MapUI
             snapshot = value; lastClick = null;
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
             nodes.Clear(); land.Clear();
-            positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value);
+            positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
             if (value != null)
             {
                 foreach (var node in value.Nodes)
