@@ -191,8 +191,8 @@ namespace Cartograph.EditorUI
         {
             if (session == null) return;
             var old = session;
-            old.StateChanged -= OnSessionStateChanged;
             await project.CloseNote(old.Path);
+            old.StateChanged -= OnSessionStateChanged;
             session = null;
         }
 

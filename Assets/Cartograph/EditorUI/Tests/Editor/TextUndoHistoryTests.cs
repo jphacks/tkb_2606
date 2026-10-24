@@ -5,6 +5,15 @@ namespace Cartograph.EditorUI.Tests
     public sealed class TextUndoHistoryTests
     {
         [Test]
+        public void UndoMetadataSurvivesSelectionUpdatesAndRedo()
+        {
+            var oldLabels = new object(); var newLabels = new object();
+            var h = new TextUndoHistory("a", metadata: oldLabels);
+            h.UpdateSelection(1, 1); h.Record("ab", 2, 2, newLabels); h.UpdateSelection(0, 2);
+            Assert.That(h.Undo().Metadata, Is.SameAs(oldLabels));
+            Assert.That(h.Redo().Metadata, Is.SameAs(newLabels));
+        }
+        [Test]
         public void JapaneseAndEmojiRoundTripWithSelection()
         {
             var h = new TextUndoHistory("あ😀\nい");

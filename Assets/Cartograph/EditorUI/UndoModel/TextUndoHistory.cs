@@ -11,11 +11,13 @@ namespace Cartograph.EditorUI
             public readonly string Text;
             public readonly int Cursor;
             public readonly int Selection;
-            public Snapshot(string text, int cursor, int selection)
+            public readonly object Metadata;
+            public Snapshot(string text, int cursor, int selection, object metadata = null)
             {
                 Text = text ?? "";
                 Cursor = Math.Max(0, Math.Min(cursor, Text.Length));
                 Selection = Math.Max(0, Math.Min(selection, Text.Length));
+                Metadata = metadata;
             }
         }
 
@@ -28,20 +30,20 @@ namespace Cartograph.EditorUI
         public bool CanRedo => index + 1 < states.Count;
         public Snapshot Current => states[index];
 
-        public TextUndoHistory(string text, int maxStates = 100, long maxCharacters = 2000000)
+        public TextUndoHistory(string text, int maxStates = 100, long maxCharacters = 2000000, object metadata = null)
         {
             if (maxStates < 2 || maxCharacters < 1) throw new ArgumentOutOfRangeException();
             this.maxStates = maxStates; this.maxCharacters = maxCharacters;
-            var initial = new Snapshot(text, 0, 0);
+            var initial = new Snapshot(text, 0, 0, metadata);
             states.Add(initial); characters = initial.Text.Length;
         }
 
         public void UpdateSelection(int cursor, int selection)
         {
-            states[index] = new Snapshot(Current.Text, cursor, selection);
+            states[index] = new Snapshot(Current.Text, cursor, selection, Current.Metadata);
         }
 
-        public void Record(string text, int cursor, int selection)
+        public void Record(string text, int cursor, int selection, object metadata = null)
         {
             if (text == Current.Text) { UpdateSelection(cursor, selection); return; }
             while (states.Count > index + 1)
@@ -49,7 +51,7 @@ namespace Cartograph.EditorUI
                 characters -= states[states.Count - 1].Text.Length;
                 states.RemoveAt(states.Count - 1);
             }
-            var next = new Snapshot(text, cursor, selection);
+            var next = new Snapshot(text, cursor, selection, metadata);
             states.Add(next); characters += next.Text.Length; index++;
             // Keep the present state even when a single document exceeds the UI budget.
             while (states.Count > 1 && (states.Count > maxStates || characters > maxCharacters))
