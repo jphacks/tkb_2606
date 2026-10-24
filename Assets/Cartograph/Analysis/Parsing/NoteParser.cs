@@ -166,16 +166,24 @@ namespace Cartograph.Analysis
             int i = line.Start;
             while (i < end)
             {
-                if (lexicon.TryMatchAt(text, i, end, out string word, out Emotion emotion) && AllTyped(typed, i, word.Length))
+                if (lexicon.TryMatchAt(text, i, end, out string word, out Emotion? emotion))
                 {
-                    if (seen == null) seen = new HashSet<(int, string)>();
-                    if (seen.Add((sentence, word)))
+                    if (!emotion.HasValue)
                     {
-                        bool withered = lexicon.IsNegated(text, i + word.Length, end);
-                        flowers.Add(new Flower(nodeId, line.Number, word, emotion, withered));
+                        i += word.Length;      // 除外語は読み飛ばす(typed かどうかを問わない)
+                        continue;
                     }
-                    i += word.Length;
-                    continue;
+                    if (AllTyped(typed, i, word.Length))
+                    {
+                        if (seen == null) seen = new HashSet<(int, string)>();
+                        if (seen.Add((sentence, word)))
+                        {
+                            bool withered = lexicon.IsNegated(text, i + word.Length, end);
+                            flowers.Add(new Flower(nodeId, line.Number, word, emotion.Value, withered));
+                        }
+                        i += word.Length;
+                        continue;
+                    }
                 }
                 if (IsSentenceEnd(text[i])) sentence++;
                 i++;
