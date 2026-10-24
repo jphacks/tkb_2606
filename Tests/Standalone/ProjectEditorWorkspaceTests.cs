@@ -101,7 +101,23 @@ namespace Cartograph.IntegrationTests
             var env = new Env(); env.PutNote("A", ""); var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
             ws.ReviewDocument("A", 0, Typing.Key("a", 0, "a")); await ws.CloseProject();
             Assert.That(ws.Tree, Is.Null); Assert.That(ws.Current, Is.Null); Assert.That(env.Body("A"), Is.EqualTo("a"));
+            Assert.That(ws.ProjectRoot, Is.Null); Assert.That(ws.Documents.Count, Is.EqualTo(0));
             await ws.OpenProject(env.Paths.Root); Assert.That(ws.Current.markdown, Is.EqualTo("a"));
+            Assert.That(ws.ProjectRoot, Is.EqualTo(env.Paths.Root));
+        }
+        [Test]
+        public async Task SwitchingProjectKeepsRootListAndCurrentInSync()
+        {
+            var env = new Env(); env.PutNote("A", "前の本文");
+            var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            string secondRoot = Path.Combine(env.Paths.Root, "別の保存先");
+            var second = ProjectWorkspace.Open(secondRoot, env.Fs, env.Options);
+            await second.CreateNote(NotePath.Parse("B"));
+            await ws.OpenProject(secondRoot);
+            Assert.That(ws.ProjectRoot, Is.EqualTo(secondRoot)); Assert.That(ws.Current.id, Is.EqualTo("B"));
+            Assert.That(ws.Documents.Count, Is.EqualTo(1)); Assert.That(ws.Documents[0].id, Is.EqualTo("B"));
+            await ws.CloseProject(); await ws.CloseProject();
+            Assert.That(ws.ProjectRoot, Is.Null); Assert.That(ws.Current, Is.Null); Assert.That(ws.Documents.Count, Is.EqualTo(0));
         }
         [Test]
         public async Task FailedSavePreventsCloseAndDelete()

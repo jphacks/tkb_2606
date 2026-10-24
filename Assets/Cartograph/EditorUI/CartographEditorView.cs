@@ -52,6 +52,7 @@ namespace Cartograph.EditorUI
         private DropdownField relatedNote;
         private Button addRelated;
         private string relatedSignature;
+        private Label projectSelection;
 #if ENABLE_INPUT_SYSTEM
         private Keyboard imeKeyboard;
         private bool composing;
@@ -115,20 +116,23 @@ namespace Cartograph.EditorUI
             projectBar.style.flexShrink = 0;
             projectPath = new TextField { label = "プロジェクト", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
             projectPath.style.width = 360; projectPath.style.maxWidth = Length.Percent(55); projectBar.Add(projectPath);
-            projectPath.SetValueWithoutNotify(PlayerPrefs.GetString("CARTOWORDS.LastProject", ""));
+            projectPath.textEdition.placeholder = "ファイルが選択されていません";
+            projectSelection = new Label("未選択"); projectSelection.AddToClassList("muted"); projectBar.Add(projectSelection);
             Button(projectBar, "開く", () => Run(OpenProjectFolder));
             Button(projectBar, "閉じる", () => Run(async () =>
             {
-                if (workspace is ProjectEditorWorkspace target) await target.CloseProject();
+                if (!(workspace is ProjectEditorWorkspace target)) throw new InvalidOperationException("通常モードで開いてください。");
+                await target.CloseProject();
+                projectPath.SetValueWithoutNotify("");
                 secondaryPane.Hide(); reviewed.Bind(null, null); activeId = null; undoHistories.Clear();
                 ResetMapContext();
             }));
 #if UNITY_EDITOR
             Button(projectBar, "フォルダを選択", () =>
             {
-                var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS プロジェクトを開く", "", "");
+                var selected = UnityEditor.EditorUtility.OpenFolderPanel("CARTOWORDS プロジェクトを開く", PlayerPrefs.GetString("CARTOWORDS.LastProject", ""), "");
                 if (string.IsNullOrEmpty(selected)) return;
-                projectPath.SetValueWithoutNotify(selected); Run(OpenProjectFolder);
+                Run(() => OpenProjectAt(selected));
             });
 #endif
 
@@ -250,7 +254,7 @@ namespace Cartograph.EditorUI
             relatedBar.Add(new Label("関連ノート"));
             relatedNote = new DropdownField(); relatedNote.style.flexGrow = 1; relatedNote.style.minWidth = 0;
             relatedNote.tooltip = "つなぎたいノートを選び、リンクを追加してください。"; relatedBar.Add(relatedNote);
-            addRelated = Button(relatedBar, "リンクを追加", () => Run(() =>
+            addRelated = Button(relatedBar, "線でつなぐ", () => Run(() =>
             {
                 var edit = RelatedNoteLink.Insert(body.value, body.cursorIndex, activeId, relatedNote.value,
                     workspace.Documents.Select(d => d.id));
@@ -376,6 +380,13 @@ namespace Cartograph.EditorUI
             writingArea.style.display = current == null ? DisplayStyle.None : DisplayStyle.Flex;
             emptyNoteMessage.style.display = current == null ? DisplayStyle.Flex : DisplayStyle.None;
             bool projectOpen = !(workspace is IReviewingEditorWorkspace project) || project.Tree != null;
+            var actualRoot = (workspace as ProjectEditorWorkspace)?.ProjectRoot;
+            projectSelection.text = actualRoot == null ? "未選択（入力後に「開く」）" : "開いています";
+            var pathFocus = projectPath.panel?.focusController.focusedElement as VisualElement;
+            bool editingPath = pathFocus != null && (ReferenceEquals(pathFocus, projectPath) || projectPath.Contains(pathFocus));
+            if (actualRoot != null && !editingPath) projectPath.SetValueWithoutNotify(actualRoot);
+            if (actualRoot != null && editingPath && projectPath.value != actualRoot) projectSelection.text = "入力中（「開く」で切替）";
+            mapPanel.SetProjectOpen(projectOpen);
             emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
                 "まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。";
             newNoteButton.SetEnabled(true);
@@ -445,11 +456,13 @@ namespace Cartograph.EditorUI
 
         private async void Run(Func<Task> action)
         {
-            if (busy || Composing) return;
+            if (busy) return;
+            if (Composing) { message.text = "日本語変換を確定してから操作してください。"; return; }
             busy = true; root.SetEnabled(false);
             try
             {
-                if (!SubmitBody(ChangeOrigin.Typing) || !secondaryPane.Submit(ChangeOrigin.Typing)) return;
+                if (!SubmitBody(ChangeOrigin.Typing) || !secondaryPane.Submit(ChangeOrigin.Typing))
+                { message.text = "入力内容の確認で操作を止めました。表示された案内を確認して、もう一度操作してください。"; return; }
                 if (workspace is IReviewedNoteAccess access && activeId != null && title.value != submittedTitle)
                 {
                     var oldId = activeId;
@@ -461,7 +474,10 @@ namespace Cartograph.EditorUI
                 else if (!SubmitTitle()) return;
                 await action(); Refresh();
             }
-            catch (Exception ex) { if (this != null) message.text = "操作に失敗しました：" + ex.Message; }
+            catch (Exception ex)
+            {
+                if (this != null) { Refresh(); message.text = "操作に失敗しました：" + ex.Message; }
+            }
             finally { busy = false; if (this != null) root.SetEnabled(true); }
         }
 
@@ -501,9 +517,20 @@ namespace Cartograph.EditorUI
 
         private async Task OpenProjectFolder()
         {
+            await OpenProjectAt(projectPath.value);
+        }
+
+        private async Task OpenProjectAt(string selected)
+        {
             var target = workspace as IReviewingEditorWorkspace;
             if (target == null) throw new InvalidOperationException("デモを終了して通常モードで起動してください。");
-            await target.OpenProject(projectPath.value);
+            try { await target.OpenProject(selected); }
+            catch
+            {
+                projectPath.SetValueWithoutNotify((workspace as ProjectEditorWorkspace)?.ProjectRoot ?? "");
+                throw;
+            }
+            projectPath.SetValueWithoutNotify((workspace as ProjectEditorWorkspace)?.ProjectRoot ?? selected);
             reviewed.Bind(null, null);
             secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
             ResetMapContext();

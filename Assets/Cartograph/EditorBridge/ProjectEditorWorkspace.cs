@@ -38,6 +38,7 @@ namespace Cartograph.EditorUI
         { this.options = options ?? new NoteSessionOptions(); this.fileSystem = fileSystem; }
         public event Action Changed;
         public bool IsPersistent => true;
+        public string ProjectRoot => project?.Root;
         public string ProjectName => project == null ? "プロジェクトを開いてください" : Path.GetFileName(project.Root);
         public FolderNode Tree => project?.Tree;
         public IReadOnlyList<NoteTreeEntry> Notes => project == null ? Array.Empty<NoteTreeEntry>() :

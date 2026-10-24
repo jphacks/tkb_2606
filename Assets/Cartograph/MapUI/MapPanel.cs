@@ -45,10 +45,17 @@ namespace Cartograph.MapUI
         {
             latest = snapshot; isPreview = false; preview.text = "表示サンプル";
             caption.text = "MAP VIEW"; canvas.SetSnapshot(snapshot);
-            info.text = snapshot == null ? "解析データ待ち" : snapshot.Nodes.Count + " 拠点 / ドラッグで移動・ダブルクリックで開く";
+            info.text = snapshot == null ? "解析データ待ち" : snapshot.Nodes.Count + " 拠点・" + snapshot.Roads.Count + " 本の線 / " +
+                (snapshot.Roads.Count == 0 ? "「関連ノート」から相手を選び「線でつなぐ」で追加できます" : "ドラッグで移動・ダブルクリックで開く");
         }
         public void Waiting() { if (!isPreview) info.text = "解析データ待ち / 表示サンプルでマップ操作を確認できます"; }
         public void ShowError(string message) { info.text = message; }
+        public void SetProjectOpen(bool open)
+        {
+            preview.style.display = open ? DisplayStyle.None : DisplayStyle.Flex;
+            if (open && isPreview) Present(latest);
+            if (!open && !isPreview) info.text = "保存先フォルダを開くと、ノートのマップを表示します。";
+        }
         public void SetFlowerColor(Emotion emotion, UnityEngine.Color32 color) => canvas.SetFlowerColor(emotion, color);
         private static MapSnapshot Sample()
         {

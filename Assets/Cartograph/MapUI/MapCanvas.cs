@@ -218,8 +218,8 @@ namespace Cartograph.MapUI
                 if (!new Rect(Math.Min(a.X, b.X) - 10, Math.Min(a.Y, b.Y) - 10, Math.Abs(a.X - b.X) + 20,
                     Math.Abs(a.Y - b.Y) + 20).Overlaps(contentRect)) continue;
                 var direction = (to - from).normalized; var normal = new Vector2(-direction.y, direction.x);
-                painter.lineWidth = edge.Auto ? 1 : edge.Kind == RoadKind.Example ? 1.2f : 2;
-                painter.strokeColor = edge.Auto ? new Color32(110, 143, 140, 180) : new Color32(177, 161, 118, 235);
+                painter.lineWidth = edge.Auto ? 1.5f : edge.Kind == RoadKind.Example ? 2 : 3;
+                painter.strokeColor = edge.Auto ? new Color32(131, 172, 166, 220) : new Color32(224, 197, 124, 255);
                 painter.BeginPath();
                 if (edge.Kind == RoadKind.Example)
                     for (int i = 0; i < 8; i++) { painter.MoveTo(Vector2.Lerp(from, to, i / 8f)); painter.LineTo(Vector2.Lerp(from, to, (i + 0.55f) / 8f)); }

@@ -36,7 +36,7 @@ namespace Cartograph.EditorUI
                 var label = string.IsNullOrWhiteSpace(note.Title) ? node.Name : note.Title;
                 var button = new Button(() => NoteSelected?.Invoke(note.DocumentId))
                 {
-                    text = (selected ? "● " : "") + label, tooltip = note.RelativePath, focusable = false
+                    text = label, tooltip = note.RelativePath, focusable = false
                 };
                 button.style.whiteSpace = WhiteSpace.Normal;
                 button.AddToClassList("note-row");
