@@ -11,11 +11,11 @@ namespace Cartograph.Art.Editor
         const string Root = "Assets/Cartograph/Art/";
         // 地図の描画が実行時に読む素材の複製(Resources.Load で読むため)。
         const string MapArtRoot = "Assets/Cartograph/MapUI/Resources/MapArt/";
-        static readonly string[] Folders = { "Buildings/", "Nature/", "Flowers/", "Flags/", "Tiles/" };
+        static readonly string[] Folders = { "Buildings/", "Nature/", "Flowers/", "Flags/", "Tiles/", "Fog/", "Marks/", "Collapse/" };
         const int PixelsPerUnit = 32;
 
         // 設定を変えたときは番号を上げる。上げると、既に取り込み済みの素材も取り込み直される。
-        public override uint GetVersion() => 2;
+        public override uint GetVersion() => 3;
 
         void OnPreprocessTexture()
         {
@@ -62,6 +62,8 @@ namespace Cartograph.Art.Editor
             if (path.Contains("/Flowers/Anim/")) return new Vector2Int(32, 64);
             if (name == "flower_all_32x64") return new Vector2Int(32, 64);
             if (name == "flower_all_withered_32x32") return new Vector2Int(32, 32);
+            if (name == "anim_fog" || name == "anim_wall_collapse" || name == "path_plain" || name.StartsWith("overlay_"))
+                return new Vector2Int(32, 32);
             bool tileSheet = name == "tile_border" || name == "tile_border_inner" || name == "tile_ground" || name == "tile_wall";
             if (tileSheet && (width > 32 || height > 32)) return new Vector2Int(32, 32);
             return null;
