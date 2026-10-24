@@ -1,0 +1,7 @@
+{
+  "name": "Cartograph.Core.Tests",
+  "references": ["Cartograph.Core"],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "autoReferenced": false
+}
