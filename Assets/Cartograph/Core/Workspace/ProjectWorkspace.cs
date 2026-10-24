@@ -100,9 +100,9 @@ namespace Cartograph.Core
         public async Task CloseNote(NotePath note)
         {
             if (!sessions.TryGetValue(note.Value, out var task)) return;
-            sessions.Remove(note.Value);
             var session = await task;
             await session.CloseAsync();
+            sessions.Remove(note.Value);
         }
 
         /// <summary>ノート名を変える。本文と、履歴・スナップショットも一緒に移す。</summary>
@@ -128,6 +128,7 @@ namespace Cartograph.Core
             {
                 var s = await t;
                 if (!s.IsClosed) await s.Flush();
+                if (s.State == NoteSaveState.Error) throw new IOException(s.Error);
             }
         }
 

@@ -146,7 +146,12 @@ namespace Cartograph.Core
         {
             lock (gate) { debounce?.Cancel(); }
             await Flush();
-            lock (gate) { closed = true; }
+            lock (gate)
+            {
+                if (state == NoteSaveState.Error || pending.Count > 0 || bodyDirty)
+                    throw new System.IO.IOException(error.Length > 0 ? error : "未保存の編集が残っています。");
+                closed = true;
+            }
         }
 
         private EditEvent BuildEvent(PlannedOp op)
