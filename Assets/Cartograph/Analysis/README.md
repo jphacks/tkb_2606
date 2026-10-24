@@ -2,7 +2,8 @@
 
 Unity 非依存の Markdown 解析(`noEngineReferences`)。`Cartograph.Core` だけを参照する。
 `Model/` に型、`Parsing/` に解析本体。いまあるのは 1 ノートの解析 `NoteParser.Parse`(拠点・親子の道・本文量・リンク・霧・理由なしの目印)。
-リンクの解決、孤島、リンク切れ、感情の花はこれから追加する。
+地図全体は `ProjectAnalyzer.Analyze(AnalysisInput の一覧)`(リンクの解決、孤島、リンク切れ)。毎回すべてのノートを解析し、キャッシュは持たない(revision はプロジェクトを開き直す・名前変更で 0 に戻るため、再利用の鍵にしない)。
+感情の花はこれから追加する。
 
 ## 共通の約束
 
