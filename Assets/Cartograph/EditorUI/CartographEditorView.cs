@@ -136,21 +136,26 @@ namespace Cartograph.EditorUI
             Button(projectBar, "フォルダを選択", SelectProjectFolder);
             Button(projectBar, "閉じる", RequestCloseProject);
 
-            var main = new TwoPaneSplitView(0, 520, TwoPaneSplitViewOrientation.Horizontal);
+            // 左から 索引 | マップ | エディタ。境界はドラッグで動かせ、幅は次回起動時に復元する。
+            var main = new TwoPaneSplitView(0, SavedWidth(IndexWidthKey, 230), TwoPaneSplitViewOrientation.Horizontal);
             main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
-            mapPanel = new MapPanel(); main.Add(mapPanel);
+            var sidebar = new VisualElement();
+            sidebar.AddToClassList("sidebar");
+            sidebar.style.minWidth = 170;
+            sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
+            main.Add(sidebar);
+            var contentSplit = new TwoPaneSplitView(0, SavedWidth(MapWidthKey, 340), TwoPaneSplitViewOrientation.Horizontal);
+            contentSplit.style.flexGrow = 1; contentSplit.style.minWidth = 0; main.Add(contentSplit);
+            RememberWidth(sidebar, IndexWidthKey);
+            mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
+            RememberWidth(mapPanel, MapWidthKey);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
             mapPanel.LayoutChanged += QueueLayoutSave;
             var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
-            rightWorkspace.style.minWidth = 380; rightWorkspace.style.flexGrow = 1; main.Add(rightWorkspace);
+            rightWorkspace.style.minWidth = 420; rightWorkspace.style.flexGrow = 1; contentSplit.Add(rightWorkspace);
             var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
             var workbench = Row(rightWorkspace); workbench.AddToClassList("workbench");
             workbench.style.flexGrow = 1; workbench.style.minHeight = 0;
-            var sidebar = new VisualElement();
-            sidebar.AddToClassList("sidebar");
-            sidebar.style.width = 185; sidebar.style.minWidth = 160; sidebar.style.flexShrink = 0;
-            sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
-            workbench.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
             notebookPicker = Button(sidebar, "ノート用フォルダを選ぶ ▾", OpenNotebookMenu);
             notebookPicker.style.whiteSpace = WhiteSpace.NoWrap; notebookPicker.style.overflow = Overflow.Hidden;
@@ -162,13 +167,22 @@ namespace Cartograph.EditorUI
                 await CreateEditableNote();
             })); newNoteButton.AddToClassList("primary-action");
             newFolderButton = Button(sidebar, "＋ フォルダ", () => RequestCreateFolder(noteTree.CurrentFolder));
-            var scroll = new ScrollView(); scroll.style.flexGrow = 1; sidebar.Add(scroll);
-            noteTree = new NoteTreeView(); scroll.Add(noteTree);
+            // 索引(検索・並べ替え・ツリー)は、サイドバーの残りの高さを使う。
+            notePicker.style.display = DisplayStyle.None; // ツリーと検索があるので、ノート選択メニューは使わない
+            noteTree = new NoteTreeView(); sidebar.Add(noteTree);
             noteTree.CreateFolderRequested += RequestCreateFolder;
-            noteTree.FolderOpened += folder => Run(async () =>
+            noteTree.MoveRequested += (id, folder) =>
             {
-                if (workspace is ProjectEditorWorkspace target) await target.OpenFolder(folder);
-            });
+                var target = workspace as ProjectEditorWorkspace; if (target == null) return;
+                var tree = target.Tree;
+                Run(async () =>
+                {
+                    if (!ReferenceEquals(tree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
+                    await target.MoveDocument(id, folder);
+                    if (secondaryPane.DocumentId == id) secondaryPane.Hide();
+                    undoHistories.Remove(id); ResetMapContext();
+                });
+            };
             noteTree.CreateNoteRequested += folder => Run(async () =>
             {
                 if (workspace is ProjectEditorWorkspace target) await target.CreateDocumentInFolder(folder);
@@ -459,6 +473,10 @@ namespace Cartograph.EditorUI
             foreach (var item in entries) signature.Append('|').Append(item.DocumentId.Length).Append(':').Append(item.DocumentId)
                 .Append(':').Append(item.RelativePath.Length).Append(':').Append(item.RelativePath)
                 .Append(':').Append(item.Title.Length).Append(':').Append(item.Title);
+            // 日時順のときは、保存のたびに並びが変わりうる。
+            if (noteTree.Sort.Key == NoteSortKey.Updated) foreach (var item in entries) signature.Append('|').Append(item.Updated.Ticks);
+            else if (noteTree.Sort.Key == NoteSortKey.Created) foreach (var item in entries) signature.Append('|').Append(item.Created.Ticks);
+            signature.Append("|sort:").Append(noteTree.Sort.Key).Append(noteTree.Sort.Descending).Append(noteTree.Sort.FoldersFirst);
             // Body edits/save notifications must not reconstruct the entire file list.
             if (listSignature != signature.ToString())
             {
@@ -976,6 +994,23 @@ namespace Cartograph.EditorUI
                 workspace.State == SaveState.Error ? "保存失敗・未保存" :
                 pending || workspace.State == SaveState.Dirty || workspace.State == SaveState.Saving ? "保存中…" :
                 workspace.State == SaveState.Saved ? "保存済み" : "未保存";
+        }
+
+        private const string IndexWidthKey = "CARTOWORDS.IndexWidth";
+        private const string MapWidthKey = "CARTOWORDS.MapWidth";
+        private static float SavedWidth(string key, float fallback)
+        {
+            var saved = PlayerPrefs.GetFloat(key, fallback);
+            return saved < 120 || saved > 2000 ? fallback : saved;
+        }
+        // 分割の固定側ペインの幅を、ドラッグ後に保存する。
+        private static void RememberWidth(VisualElement pane, string key)
+        {
+            pane.RegisterCallback<GeometryChangedEvent>(evt =>
+            {
+                if (evt.newRect.width < 120 || Mathf.Approximately(evt.newRect.width, evt.oldRect.width)) return;
+                PlayerPrefs.SetFloat(key, evt.newRect.width);
+            });
         }
 
         private static VisualElement Row(VisualElement parent)

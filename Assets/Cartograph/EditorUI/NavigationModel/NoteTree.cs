@@ -9,12 +9,17 @@ namespace Cartograph.EditorUI.Navigation
         public string DocumentId { get; }
         public string RelativePath { get; }
         public string Title { get; }
-        public NoteTreeEntry(string documentId, string relativePath, string title)
+        // 並べ替え専用。不明なら DateTime.MinValue。
+        public DateTime Created { get; }
+        public DateTime Updated { get; }
+        public NoteTreeEntry(string documentId, string relativePath, string title,
+            DateTime created = default, DateTime updated = default)
         {
             if (string.IsNullOrEmpty(documentId)) throw new ArgumentException("Document ID is required.");
             DocumentId = documentId;
             RelativePath = Normalize(relativePath);
             Title = title ?? "";
+            Created = created; Updated = updated;
         }
 
         // Display model only; never used for filesystem access or authorization.
@@ -41,16 +46,41 @@ namespace Cartograph.EditorUI.Navigation
         internal NoteTreeNode(string name, string path, NoteTreeEntry note = null)
         { Name = name; Path = path; Note = note; }
         internal void Add(NoteTreeNode node) => children.Add(node);
-        internal void Sort()
+        internal void Sort() => Sort(NoteTreeSort.Default);
+
+        /// <summary>Re-sorts this subtree. Folders take the newest/oldest time of what they contain.</summary>
+        public void Sort(NoteTreeSort sort)
         {
+            sort = sort ?? NoteTreeSort.Default;
             children.Sort((a, b) =>
             {
-                if (a.IsFolder != b.IsFolder) return a.IsFolder ? -1 : 1;
-                var order = a.IsFolder ? StringComparer.Ordinal.Compare(a.Name, b.Name)
-                    : CompareNatural(NoteStem(a.Name), NoteStem(b.Name));
+                if (sort.FoldersFirst && a.IsFolder != b.IsFolder) return a.IsFolder ? -1 : 1;
+                int order = 0;
+                if (sort.Key == NoteSortKey.Updated) order = a.LatestUpdated().CompareTo(b.LatestUpdated());
+                else if (sort.Key == NoteSortKey.Created) order = a.EarliestCreated().CompareTo(b.EarliestCreated());
+                if (order == 0)
+                    order = a.IsFolder && b.IsFolder ? StringComparer.Ordinal.Compare(a.Name, b.Name)
+                        : CompareNatural(NoteStem(a.Name), NoteStem(b.Name));
+                if (sort.Descending) order = -order;
                 return order != 0 ? order : StringComparer.Ordinal.Compare(a.Path, b.Path);
             });
-            foreach (var child in children) child.Sort();
+            foreach (var child in children) child.Sort(sort);
+        }
+
+        private DateTime LatestUpdated()
+        {
+            if (!IsFolder) return Note.Updated;
+            var latest = DateTime.MinValue;
+            foreach (var child in children) { var t = child.LatestUpdated(); if (t > latest) latest = t; }
+            return latest;
+        }
+        // 作成日時が不明(MinValue)のものは「最も新しい」側に寄せ、先頭に紛れ込ませない。
+        private DateTime EarliestCreated()
+        {
+            if (!IsFolder) return Note.Created == DateTime.MinValue ? DateTime.MaxValue : Note.Created;
+            var earliest = DateTime.MaxValue;
+            foreach (var child in children) { var t = child.EarliestCreated(); if (t < earliest) earliest = t; }
+            return earliest;
         }
 
         private static string NoteStem(string name) => name.EndsWith(".md", StringComparison.OrdinalIgnoreCase)

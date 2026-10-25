@@ -87,6 +87,14 @@ namespace Cartograph.Core
             return new NotePath(folder.Length == 0 ? newName : folder + "/" + newName);
         }
 
+        /// <summary>同じ名前のまま別フォルダに置いたパスを返す(移動用)。folder が空ならルート。</summary>
+        public NotePath WithFolder(string folder)
+        {
+            folder = folder ?? "";
+            if (folder.Length > 0) folder = Parse(folder + "/placeholder").FolderPath;
+            return new NotePath(folder.Length == 0 ? Name : folder + "/" + Name);
+        }
+
         public bool Equals(NotePath other) => string.Equals(Value, other.Value, StringComparison.Ordinal);
         public override bool Equals(object obj) => obj is NotePath p && Equals(p);
         public override int GetHashCode() => Value == null ? 0 : StringComparer.Ordinal.GetHashCode(Value);

@@ -149,6 +149,15 @@
 .cartowords .note-title .unity-text-field__input { padding-top: 2px; padding-bottom: 2px; }
 .cartowords .note-row:hover { background-color: rgb(48, 67, 83); border-color: rgb(72, 134, 151); }
 .cartowords .note-row--selected:hover { background-color: rgb(31, 100, 122); }
+/* Note index tree (VSCode style rows). */
+.cartowords .tree-row { border-radius: 4px; border-left-width: 3px; border-left-color: rgba(0, 0, 0, 0); padding-right: 6px; }
+.cartowords .tree-row:hover { background-color: rgb(40, 52, 70); }
+.cartowords .tree-row--folder-current { background-color: rgb(33, 41, 57); }
+.cartowords .tree-row--cursor { border-color: rgb(72, 134, 151); border-width: 1px; border-left-width: 3px; }
+.cartowords .tree-row--selected { background-color: rgb(28, 92, 119); border-left-color: rgb(48, 146, 168); }
+.cartowords .tree-row--selected:hover { background-color: rgb(32, 110, 136); }
+.cartowords .tree-row--drop { background-color: rgb(29, 108, 132); border-color: rgb(88, 208, 217); border-width: 1px; }
+.cartowords .tree-search .unity-text-field__input { padding: 3px 6px; font-size: 12px; border-radius: 5px; }
 .cartowords .town-folder > .unity-foldout__toggle:hover { background-color: rgb(48, 67, 83); }
 .cartowords .town-folder .unity-foldout__content { margin-left: 10px; }
 .cartowords .format-toolbar .unity-button { padding: 2px 5px; font-size: 10px; min-height: 21px; margin-right: 3px; margin-top: 1px; margin-bottom: 3px; }
