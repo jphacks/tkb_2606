@@ -15,7 +15,7 @@ namespace Cartograph.Art.Editor
         const int PixelsPerUnit = 32;
 
         // 設定を変えたときは番号を上げる。上げると、既に取り込み済みの素材も取り込み直される。
-        public override uint GetVersion() => 3;
+        public override uint GetVersion() => 5;
 
         void OnPreprocessTexture()
         {
@@ -28,7 +28,8 @@ namespace Cartograph.Art.Editor
             importer.alphaIsTransparency = true;
             importer.wrapMode = TextureWrapMode.Clamp;
             importer.spritePixelsPerUnit = PixelsPerUnit;
-            importer.spritePivot = new Vector2(0.5f, 0.5f);
+            // 人物は足元(下辺中央)が基準。それ以外は中央。
+            importer.spritePivot = assetPath.Contains("/Characters/") ? new Vector2(0.5f, 0f) : new Vector2(0.5f, 0.5f);
             importer.maxTextureSize = 2048;
 
             importer.GetSourceTextureWidthAndHeight(out int width, out int height);
@@ -40,7 +41,7 @@ namespace Cartograph.Art.Editor
             }
             importer.spriteImportMode = SpriteImportMode.Multiple;
 #pragma warning disable CS0618
-            importer.spritesheet = Slice(System.IO.Path.GetFileNameWithoutExtension(assetPath), width, height, cell.Value.x, cell.Value.y);
+            importer.spritesheet = Slice(System.IO.Path.GetFileNameWithoutExtension(assetPath), width, height, cell.Value.x, cell.Value.y, assetPath.Contains("/Characters/"));
 #pragma warning restore CS0618
         }
 
@@ -62,6 +63,7 @@ namespace Cartograph.Art.Editor
             if (path.Contains("/Flowers/Anim/")) return new Vector2Int(32, 64);
             if (name == "flower_all_32x64") return new Vector2Int(32, 64);
             if (name == "flower_all_withered_32x32") return new Vector2Int(32, 32);
+            if (name.StartsWith("npc_")) return new Vector2Int(32, 48);
             if (name == "anim_fog" || name == "anim_wall_collapse" || name == "path_plain" || name.StartsWith("overlay_"))
                 return new Vector2Int(32, 32);
             bool tileSheet = name == "tile_border" || name == "tile_border_inner" || name == "tile_ground" || name == "tile_wall";
@@ -69,7 +71,7 @@ namespace Cartograph.Art.Editor
             return null;
         }
 
-        static SpriteMetaData[] Slice(string name, int width, int height, int cw, int ch)
+        static SpriteMetaData[] Slice(string name, int width, int height, int cw, int ch, bool bottom)
         {
             var list = new List<SpriteMetaData>();
             int cols = width / cw, rows = height / ch, index = 0;
@@ -79,8 +81,8 @@ namespace Cartograph.Art.Editor
                 {
                     name = name + "_" + index++,
                     rect = new Rect(col * cw, height - (row + 1) * ch, cw, ch),
-                    alignment = (int)SpriteAlignment.Center,
-                    pivot = new Vector2(0.5f, 0.5f),
+                    alignment = (int)(bottom ? SpriteAlignment.BottomCenter : SpriteAlignment.Center),
+                    pivot = bottom ? new Vector2(0.5f, 0f) : new Vector2(0.5f, 0.5f),
                 });
             return list.ToArray();
         }

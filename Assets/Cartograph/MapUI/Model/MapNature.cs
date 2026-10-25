@@ -13,8 +13,13 @@ namespace Cartowords.MapPresentation
     public readonly struct NatureItem
     {
         public readonly NatureKind Kind;
+        // X,Y は基準のマス。OffsetX/OffsetY はマス内のずれ(単位はマス、おおむね ±0.5)。描く位置は (X+OffsetX, Y+OffsetY)。
         public readonly int X, Y;
-        public NatureItem(NatureKind kind, int x, int y) { Kind = kind; X = x; Y = y; }
+        public readonly float OffsetX, OffsetY;
+        public NatureItem(NatureKind kind, int x, int y, float offsetX = 0f, float offsetY = 0f)
+        { Kind = kind; X = x; Y = y; OffsetX = offsetX; OffsetY = offsetY; }
+        public float WorldX => X + OffsetX;
+        public float WorldY => Y + OffsetY;
         public bool IsLargeTree => Kind == NatureKind.PineLarge || Kind == NatureKind.RoundLarge;
     }
 
@@ -74,9 +79,10 @@ namespace Cartowords.MapPresentation
             long total = budgets.Sum(b => (long)b);
             if (total > s.TotalCap) for (int i = 0; i < budgets.Length; i++) budgets[i] = (int)(budgets[i] * (long)s.TotalCap / total);
 
+            var natureCells = new HashSet<long>();
             for (int i = 0; i < targets.Length; i++)
             {
-                if (budgets[i] > 0) PlaceNode(targets[i], budgets[i], incident, occupancy, s, result);
+                if (budgets[i] > 0) PlaceNode(targets[i], budgets[i], incident, occupancy, s, result, natureCells);
             }
             return result;
         }
@@ -101,7 +107,7 @@ namespace Cartowords.MapPresentation
         }
 
         static void PlaceNode(NatureNode node, int budget, Dictionary<string, List<RoadKind>> incident, MapOccupancy occupancy,
-            NatureSettings s, List<NatureItem> result)
+            NatureSettings s, List<NatureItem> result, HashSet<long> natureCells)
         {
             int cx = MapCell.X(node.Cell), cy = MapCell.Y(node.Cell), r = MapLayout.LandRadius(node.TypedChars);
             var candidates = new List<(int X, int Y, int Hash, bool Side)>();
@@ -123,20 +129,41 @@ namespace Cartowords.MapPresentation
             int town = MapLayout.StableHash(node.Town);
             int tier = node.TypedChars >= s.ForestFrom ? 3 : node.TypedChars >= s.TreeFrom ? 2 : node.TypedChars >= s.BushFrom ? 1 : 0;
             int placed = 0, sideBudget = budget / 3;
+            // 隣り合う拠点の土地が重なる所で、同じマスに 2 回置かないための記録(自然物は占有表に入れない)。
+            var used = natureCells;
             foreach (var c in candidates)
             {
                 if (placed >= budget) break;
                 if (!c.Side || sideBudget <= 0) continue;
-                if (!occupancy.Reserve(c.X, c.Y, OccupyKind.Nature)) continue;
-                result.Add(new NatureItem(SideKind(kinds, c.Hash), c.X, c.Y)); placed++; sideBudget--;
+                if (!used.Add(MapCell.Key(c.X, c.Y))) continue;
+                result.Add(Make(SideKind(kinds, c.Hash), node, c.X, c.Y, occupancy)); placed++; sideBudget--;
             }
             foreach (var c in candidates)
             {
                 if (placed >= budget) break;
-                if (!occupancy.Reserve(c.X, c.Y, OccupyKind.Nature)) continue;
+                if (!used.Add(MapCell.Key(c.X, c.Y))) continue;
                 int distance = Math.Max(Math.Abs(c.X - cx), Math.Abs(c.Y - cy));
-                result.Add(new NatureItem(Choose(c.Hash, tier, node.Level, distance, town, s), c.X, c.Y)); placed++;
+                result.Add(Make(Choose(c.Hash, tier, node.Level, distance, town, s), node, c.X, c.Y, occupancy)); placed++;
             }
+        }
+
+        // マス内のずれ。拠点ID とマスだけから決まる(乱数なし)。隣のマスが道・建物・旗などで塞がっていたら、そちらへは寄せない。
+        // 自然物同士の重なりは許す(占有表には記録しない)。
+        public static (float X, float Y) OffsetFor(string nodeId, int x, int y)
+        {
+            int h = MapLayout.StableHash(nodeId + ":" + x + "," + y + ":offset") & 0x7fffffff;
+            return ((h % 1024) / 1023f - 0.5f, (h / 1024 % 1024) / 1023f - 0.5f);
+        }
+
+        static NatureItem Make(NatureKind kind, NatureNode node, int x, int y, MapOccupancy occupancy)
+        {
+            var (ox, oy) = OffsetFor(node.Id, x, y);
+            const float Near = 0.1f;
+            if (!occupancy.IsFree(x + 1, y)) ox = Math.Min(ox, Near);
+            if (!occupancy.IsFree(x - 1, y)) ox = Math.Max(ox, -Near);
+            if (!occupancy.IsFree(x, y + 1)) oy = Math.Min(oy, Near);
+            if (!occupancy.IsFree(x, y - 1)) oy = Math.Max(oy, -Near);
+            return new NatureItem(kind, x, y, ox, oy);
         }
 
         // 道の脇: 前提の先は松、対比は岩、具体例はキノコか芽、ふつうの道は低木。複数あれば、マスごとに選ぶ。
