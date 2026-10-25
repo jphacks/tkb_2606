@@ -31,3 +31,10 @@ Unity 非依存の Markdown 解析(`noEngineReferences`)。`Cartograph.Core` だ
 - `NoteLink` … 宛先を解決する前のリンク
 - `NoteAnalysis` … 1 ノートだけで決まる結果(再解析とキャッシュの単位)
 - `AnalysisResult` … 地図全体の結果。マップ描画が読む。`Revisions` で古い結果を判別する
+
+## 関連ノートの自動検出
+
+`RelatedNoteDetector`(`Related/`)は、ノート同士の関連候補を返す(リンクは作らない)。入力は `RelatedNoteSource`(ID・題名・本文)の一覧。
+`Detect` で全件、`DetectFor(noteId, ...)` で 1 ノートに関わる組だけを計算し、`Replace` で既存の候補へ反映する。
+根拠は言及・固有名詞(別名つきノートへの共通の言及)・共通キーワード・感情の類似(補助)。重みとしきい値は `RelatedNoteOptions`。
+確定済み・却下済みの組は `RelatedPair` で `excluded` に渡すと候補から外れる。別名の編集・名前変更のときは `Detect` で全件を計算し直す。
