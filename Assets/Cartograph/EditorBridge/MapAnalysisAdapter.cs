@@ -50,7 +50,7 @@ namespace Cartograph.EditorUI
             if (!Matches(request.NoteRevisions, result.Revisions.ToDictionary(p => p.Key.Value, p => p.Value)))
                 throw new InvalidOperationException("解析結果の版が入力と一致しません。");
             return new MapSnapshot(request,
-                result.Nodes.Select(n => new MapNode(n.Id, n.File.Value, n.Title, n.Line, n.TypedChars, n.Isolated)),
+                result.Nodes.Select(n => new MapNode(n.Id, n.File.Value, n.Title, n.Line, n.TypedChars, n.Isolated, n.Level)),
                 result.Edges.Select(e => new MapRoad(e.From, e.To, Road(e.Kind), e.Auto)),
                 result.Fogs.Select(f => new MapFog(f.Node, f.Line)),
                 result.Marks.Select(m => new MapMark(m.Node, Mark(m.Type), m.Message)),

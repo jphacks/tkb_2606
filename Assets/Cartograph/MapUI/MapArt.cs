@@ -34,9 +34,19 @@ namespace Cartograph.MapUI
         };
         public readonly Sprite Hut, House, Lodge3x2, Lodge3x3;
         public readonly TowerArt[][] Towers;
+        // 自然物の絵。NatureKind の値で引く。読めないものは null。
+        static readonly string[] NatureNames =
+        {
+            "nature_grass_tuft", "nature_sprout", "nature_bush", "nature_bush_berry", "nature_rock",
+            "nature_mushroom_brown", "nature_mushroom_red", "nature_stump",
+            "nature_tree_pine_s", "nature_tree_pine_l", "nature_tree_round_s", "nature_tree_round_l",
+        };
+        public readonly Sprite[] Nature;
 
         MapArt()
         {
+            Nature = new Sprite[NatureNames.Length];
+            for (int i = 0; i < NatureNames.Length; i++) Nature[i] = Single("Nature/" + NatureNames[i]);
             Hut = Single("Buildings/building_hut_1x1");
             House = Single("Buildings/building_house_2x2");
             Lodge3x2 = Single("Buildings/building_lodge_3x2");

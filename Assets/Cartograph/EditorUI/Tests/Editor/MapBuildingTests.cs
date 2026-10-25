@@ -99,6 +99,19 @@ namespace Cartograph.EditorUI.Tests
         }
 
         [Test]
+        public void PlacedBuildingsAreReservedInTheSharedOccupancyMap()
+        {
+            var nodes = Nodes(("a", 0, 0));
+            var occupancy = MapOccupancy.ForNodes(nodes.Values, new[] { MapCell.Key(5, 5) });
+            Assert.That(occupancy.Kind(0, 0), Is.EqualTo(OccupyKind.Flag));
+            Assert.That(occupancy.Kind(5, 5), Is.EqualTo(OccupyKind.Path));
+            var placed = BuildingPlacer.PlaceOn(new[] { B("a", "x/1", 0, 0, 10) }, nodes, occupancy, Settings).Single();
+            Assert.That(occupancy.Kind(placed.X, placed.Y), Is.EqualTo(OccupyKind.Building));
+            Assert.That(occupancy.Reserve(placed.X, placed.Y, OccupyKind.Nature), Is.False);
+            Assert.That(occupancy.Kind(placed.X, placed.Y), Is.EqualTo(OccupyKind.Building));
+        }
+
+        [Test]
         public void ExtraBuildingsBeyondTheLimitAreDropped()
         {
             var nodes = Nodes(("a", 0, 0));

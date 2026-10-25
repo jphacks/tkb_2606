@@ -45,8 +45,13 @@ namespace Cartograph.MapUI
         public event Action<string> MarkSelected;
         public event Action<MapBuilding, MapNode> BuildingSelected;
         public event Action<MapBuilding, MapNode> BuildingDoubleClicked;
+        // 拠点の位置が、最後に通知した(または読み込んだ)ものから変わった時。保存のために使う。
+        public event Action<IReadOnlyDictionary<string, MapPoint>> LayoutChanged;
+        private Dictionary<string, MapPoint> reportedLayout = new Dictionary<string, MapPoint>();
         // 置いた建物。SetSnapshot で、道のマスが決まったあとに決める。
         private readonly List<BuildingPlacement> placements = new List<BuildingPlacement>();
+        // 置いた自然物(解析のたびに一度だけ決める)。描く時は画面内のものだけ拾う。
+        private readonly List<NatureItem> natureItems = new List<NatureItem>();
         private readonly Label hoverLabel = new Label { pickingMode = PickingMode.Ignore, enableRichText = false };
 
         public MapCanvas()
@@ -127,7 +132,7 @@ namespace Cartograph.MapUI
             snapshot = value; lastClick = null;
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
             var before = new HashSet<long>(land);
-            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); HideHover();
+            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); natureItems.Clear(); HideHover();
             positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
             if (value != null)
             {
@@ -142,7 +147,7 @@ namespace Cartograph.MapUI
                             PutLand(cx + x, cy + y);
                 }
                 foreach (var edge in value.Roads) Carve(edge, positions[edge.From], positions[edge.To]);
-                PlaceBuildings(value);
+                PlaceObjects(value);
                 if (before.Count > 0)
                     foreach (long key in land) if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame;
             }
@@ -150,6 +155,15 @@ namespace Cartograph.MapUI
             pendingFit = firstData;
             if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
             Repaint();
+            if (value != null && !MapLayoutFile.Same(positions, reportedLayout))
+            { reportedLayout = new Dictionary<string, MapPoint>(positions); LayoutChanged?.Invoke(reportedLayout); }
+        }
+        // 保存してあった拠点の位置を、最初の解析結果が来る前に渡す。次の SetSnapshot で、その位置に固定される。
+        public void SetSavedLayout(IReadOnlyDictionary<string, MapPoint> saved)
+        {
+            if (snapshot != null && snapshot.Nodes.Count > 0) return;
+            positions = saved == null ? new Dictionary<string, MapPoint>() : new Dictionary<string, MapPoint>(saved);
+            reportedLayout = new Dictionary<string, MapPoint>(positions);
         }
         private static long Key(int x, int y) => ((long)x << 32) | (uint)y;
         private void PutLand(int x, int y) => land.Add(Key(x, y));
@@ -188,21 +202,28 @@ namespace Cartograph.MapUI
             }
         }
         // 描ける絵のある建物だけを、旗・花・道を避けて置く。建物のマスは土地にして、足りない土地を広げる。
-        private void PlaceBuildings(MapSnapshot value)
+        // 占有マップに、旗・花・目印(拠点の中心 3x3)、道、建物、自然物の順に予約していく。先に予約したものが優先される。
+        private void PlaceObjects(MapSnapshot value)
         {
-            if (value.Buildings.Count == 0) return;
-            var art = MapArt.Instance; var settings = BuildingConfig.Settings;
-            var drawable = value.Buildings.Where(b => HasArt(BuildingSizing.Measure(b, settings), b, art));
+            var art = MapArt.Instance;
             var cells = new Dictionary<string, long>();
             foreach (var node in value.Nodes)
             { var p = positions[node.Id]; cells[node.Id] = MapCell.Key((int)(p.X / MapLayout.Tile), (int)(p.Y / MapLayout.Tile)); }
-            foreach (var placement in BuildingPlacer.Place(drawable, cells, new HashSet<long>(pathMask.Keys), settings))
+            var occupancy = MapOccupancy.ForNodes(cells.Values, pathMask.Keys);
+
+            var settings = BuildingConfig.Settings;
+            var drawable = value.Buildings.Where(b => HasArt(BuildingSizing.Measure(b, settings), b, art));
+            foreach (var placement in BuildingPlacer.PlaceOn(drawable, cells, occupancy, settings))
             {
                 placements.Add(placement);
                 for (int dx = 0; dx < placement.Size.Width; dx++)
                 for (int dy = 0; dy < placement.Size.Depth; dy++)
                     PutLand(placement.X + dx, placement.Y + dy);
             }
+
+            var natureNodes = value.Nodes.Select(n => new NatureNode(n.Id, cells[n.Id], n.TypedChars, n.Level, n.Town));
+            foreach (var item in NaturePlacer.Place(natureNodes, value.Roads, occupancy, NatureConfig.Settings))
+                if (art.Nature[(int)item.Kind] != null) natureItems.Add(item);
         }
         private static bool HasArt(BuildingSize size, MapBuilding building, MapArt art)
             => size.Shape == BuildingShape.Tower ? art.TowerFor(size.Width, MapLayout.StableHash(building.File)) != null : art.Fixed(size.Shape) != null;
@@ -386,7 +407,7 @@ namespace Cartograph.MapUI
             Flush(context, quads); quads.Clear();
             // 花・旗・建物は、下の辺が奥(上)にあるものから順に重ねる。
             var objects = new List<DepthSprite>();
-            AddFlowers(objects, art); AddFlags(objects, quads, art); AddBuildings(objects, art);
+            AddNature(objects, art); AddFlowers(objects, art); AddFlags(objects, quads, art); AddBuildings(objects, art);
             FlushOrdered(context, objects);
             foreach (var mark in snapshot.Marks)
             {
@@ -475,13 +496,16 @@ namespace Cartograph.MapUI
             int index = kind.Key == RoadKind.Premise ? kind.Value : vertical ? 1 : 0;
             if (index < frames.Length) AddTile(overlays, x, y, frames[index]);
         }
-        // 奥行きの順に並べるための絵。Bottom は絵の下の辺の世界座標、Order は追加した順(同じ高さなら後のものが手前)。
+        // 奥行きの順に並べるための絵。Bottom は絵の下の辺の世界座標。
+        // 同じ高さでは、Layer(自然物 < 花 < 旗 < 建物の順に手前)、次に同じテクスチャ同士でまとめる(メッシュの数を抑えるため)。
+        private const int LayerNature = 0, LayerFlower = 1, LayerFlag = 2, LayerBuilding = 3;
         private readonly struct DepthSprite
         {
             public readonly float Bottom;
-            public readonly int Order;
+            public readonly int Layer, Texture, Order;
             public readonly SpriteDraw Draw;
-            public DepthSprite(float bottom, int order, SpriteDraw draw) { Bottom = bottom; Order = order; Draw = draw; }
+            public DepthSprite(float bottom, int layer, int order, SpriteDraw draw)
+            { Bottom = bottom; Layer = layer; Order = order; Draw = draw; Texture = draw.Sprite.texture.GetInstanceID(); }
         }
         private void AddFlowers(List<DepthSprite> objects, MapArt art)
         {
@@ -497,7 +521,23 @@ namespace Cartograph.MapUI
                 // 拠点のマスと、そのまわり1マスのどこかに咲かせる。
                 float x = p.X + (hash % 3 - 1) * MapLayout.Tile, bottom = p.Y + (hash / 3 % 3 - 1) * MapLayout.Tile + MapLayout.Tile / 2;
                 one.Clear();
-                if (AddAnchored(one, x, bottom, sprite)) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
+                if (AddAnchored(one, x, bottom, sprite)) objects.Add(new DepthSprite(bottom, LayerFlower, objects.Count, one[0]));
+            }
+        }
+        // 画面内の自然物だけを加える。拡大率が小さい時は描かない。
+        private void AddNature(List<DepthSprite> objects, MapArt art)
+        {
+            if (natureItems.Count == 0 || viewport.Scale < NatureConfig.Settings.HideBelowScale) return;
+            float tile = MapLayout.Tile;
+            var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(contentRect.width, contentRect.height));
+            float left = topLeft.X - tile * 2, right = bottomRight.X + tile * 2, top = topLeft.Y - tile * 2, bottom = bottomRight.Y + tile * 4;
+            var one = new List<SpriteDraw>(1);
+            foreach (var item in natureItems)
+            {
+                float x = item.X * tile, baseline = item.Y * tile + tile / 2;
+                if (x < left || x > right || baseline < top || baseline > bottom) continue;
+                one.Clear();
+                if (AddAnchored(one, x, baseline, art.Nature[(int)item.Kind])) objects.Add(new DepthSprite(baseline, LayerNature, objects.Count, one[0]));
             }
         }
         private void AddFlags(List<DepthSprite> objects, List<Quad> quads, MapArt art)
@@ -512,7 +552,7 @@ namespace Cartograph.MapUI
                 var at = positions[node.Id];
                 float bottom = at.Y + MapLayout.Tile / 2;
                 one.Clear();
-                if (AddAnchored(one, at.X, bottom, frames[frame % frames.Length])) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
+                if (AddAnchored(one, at.X, bottom, frames[frame % frames.Length])) objects.Add(new DepthSprite(bottom, LayerFlag, objects.Count, one[0]));
             }
         }
         // 固定サイズの建物は1枚絵、ビルは1階・中階(a と b を交互)・屋上を下から積む。
@@ -527,7 +567,7 @@ namespace Cartograph.MapUI
                 {
                     if (sprite == null) return;
                     one.Clear();
-                    if (AddAnchored(one, x, top, sprite)) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
+                    if (AddAnchored(one, x, top, sprite)) objects.Add(new DepthSprite(bottom, LayerBuilding, objects.Count, one[0]));
                     top -= sprite.rect.height;
                 }
                 if (p.Size.Shape != BuildingShape.Tower) { Part(art.Fixed(p.Size.Shape)); continue; }
@@ -540,7 +580,8 @@ namespace Cartograph.MapUI
         }
         private static void FlushOrdered(MeshGenerationContext context, List<DepthSprite> objects)
         {
-            objects.Sort((a, b) => a.Bottom != b.Bottom ? a.Bottom.CompareTo(b.Bottom) : a.Order.CompareTo(b.Order));
+            objects.Sort((a, b) => a.Bottom != b.Bottom ? a.Bottom.CompareTo(b.Bottom) : a.Layer != b.Layer ? a.Layer.CompareTo(b.Layer)
+                : a.Texture != b.Texture ? a.Texture.CompareTo(b.Texture) : a.Order.CompareTo(b.Order));
             var run = new List<SpriteDraw>();
             for (int i = 0; i < objects.Count; i++)
             {

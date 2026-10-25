@@ -65,6 +65,20 @@ namespace Cartograph.IntegrationTests
             Assert.Throws<InvalidOperationException>(() => MapAnalysisAdapter.Convert(request, analysis));
         }
         [Test]
+        public async Task MapLayoutSurvivesReopeningTheProjectAndBrokenFilesReadAsEmpty()
+        {
+            var env = new Env(); env.PutNote("A", "# a");
+            var ws = new ProjectEditorWorkspace(env.Options, env.Fs); await ws.OpenProject(env.Paths.Root);
+            Assert.That(ws.LoadMapLayout().Count, Is.EqualTo(0));
+            var layout = new Dictionary<string, MapPoint> { { "A#a", new MapPoint(2 * MapLayout.Tile, -3 * MapLayout.Tile) } };
+            Assert.That(ws.SaveMapLayout(layout), Is.True);
+            var reopened = new ProjectEditorWorkspace(env.Options, env.Fs); await reopened.OpenProject(env.Paths.Root);
+            Assert.That(MapLayoutFile.Same(reopened.LoadMapLayout(), layout), Is.True);
+            env.Fs.WriteAllTextAtomic(System.IO.Path.Combine(env.Paths.Root, ".cartograph", "map-layout.txt"), "garbage");
+            Assert.That(reopened.LoadMapLayout().Count, Is.EqualTo(0));
+            Assert.That(new ProjectEditorWorkspace(env.Options, env.Fs).SaveMapLayout(layout), Is.False);
+        }
+        [Test]
         public void ConvertsProperNounBuildingsWithNoteNameAndEmphasisCounts()
         {
             var request = new MapRequest("p", 1, new Dictionary<string, long> { { "人物/田中", 1 }, { "日記", 1 } });

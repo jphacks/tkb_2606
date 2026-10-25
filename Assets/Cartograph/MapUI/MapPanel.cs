@@ -13,6 +13,9 @@ namespace Cartograph.MapUI
         private MapSnapshot latest;
         private bool isPreview;
         public event Action<string, int> OpenNoteRequested;
+        // 実ノートの拠点の位置が変わった時(表示サンプルでは通知しない)。
+        public event Action<IReadOnlyDictionary<string, MapPoint>> LayoutChanged;
+        public void SetSavedLayout(IReadOnlyDictionary<string, MapPoint> saved) => canvas.SetSavedLayout(saved);
 
         public MapPanel()
         {
@@ -34,6 +37,7 @@ namespace Cartograph.MapUI
             });
             preview.AddToClassList("map-preview-button"); Add(preview);
             canvas.NodeSelected += node => info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く";
+            canvas.LayoutChanged += layout => { if (!isPreview) LayoutChanged?.Invoke(layout); };
             canvas.MarkSelected += message => info.text = message;
             canvas.BuildingSelected += (building, node) =>
                 info.text = building.Name + " / 「" + node.Title + "」に " + building.Count + " 回 / ダブルクリックで開く";

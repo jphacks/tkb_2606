@@ -19,11 +19,13 @@ namespace Cartowords.MapPresentation
         public int Line { get; }
         public int TypedChars { get; }
         public bool Isolated { get; }
-        public MapNode(string id, string file, string title, int line, int typedChars, bool isolated = false)
+        /// <summary>見出しの深さ(1〜3)。見出しのないファイルの拠点は 0。</summary>
+        public int Level { get; }
+        public MapNode(string id, string file, string title, int line, int typedChars, bool isolated = false, int level = 0)
         {
-            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(file) || line < 1 || typedChars < 0)
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(file) || line < 1 || typedChars < 0 || level < 0 || level > 3)
                 throw new ArgumentException("Invalid rendering node.");
-            Id = id; File = file; Title = title ?? ""; Line = line; TypedChars = typedChars; Isolated = isolated;
+            Id = id; File = file; Title = title ?? ""; Line = line; TypedChars = typedChars; Isolated = isolated; Level = level;
             int slash = file.LastIndexOf('/'); Town = slash < 0 ? "" : file.Substring(0, slash);
         }
     }

@@ -113,14 +113,13 @@ namespace Cartowords.MapPresentation
         /// </summary>
         public static List<BuildingPlacement> Place(IEnumerable<MapBuilding> buildings, IReadOnlyDictionary<string, long> nodeCells,
             ISet<long> pathCells, BuildingSettings settings)
+            => PlaceOn(buildings, nodeCells, MapOccupancy.ForNodes(nodeCells.Values, pathCells), settings);
+
+        /// <summary>占有マップを渡す版。置いた建物のマスは、占有マップに予約される。</summary>
+        public static List<BuildingPlacement> PlaceOn(IEnumerable<MapBuilding> buildings, IReadOnlyDictionary<string, long> nodeCells,
+            MapOccupancy occupied, BuildingSettings settings)
         {
             var s = (settings ?? BuildingSettings.Default).Normalized();
-            var occupied = new HashSet<long>(pathCells ?? new HashSet<long>());
-            foreach (long center in nodeCells.Values)
-                for (int dx = -1; dx <= 1; dx++)
-                for (int dy = -1; dy <= 1; dy++)
-                    occupied.Add(MapCell.Key(MapCell.X(center) + dx, MapCell.Y(center) + dy));
-
             var result = new List<BuildingPlacement>();
             var byNode = buildings.Where(b => nodeCells.ContainsKey(b.Node)).GroupBy(b => b.Node).OrderBy(g => g.Key, StringComparer.Ordinal);
             foreach (var group in byNode)
@@ -133,7 +132,7 @@ namespace Cartowords.MapPresentation
                     if (!TryFind(center, size, occupied, out int x, out int y)) continue;
                     for (int dx = 0; dx < size.Width; dx++)
                     for (int dy = 0; dy < size.Depth; dy++)
-                        occupied.Add(MapCell.Key(x + dx, y + dy));
+                        occupied.Reserve(x + dx, y + dy, OccupyKind.Building);
                     result.Add(new BuildingPlacement(building, size, x, y));
                 }
             }
@@ -141,7 +140,7 @@ namespace Cartowords.MapPresentation
         }
 
         // 拠点に近い順(建物の中心までの距離、次に上、次に左)に、空いている左上のマスを探す。
-        static bool TryFind(long center, BuildingSize size, HashSet<long> occupied, out int x, out int y)
+        static bool TryFind(long center, BuildingSize size, MapOccupancy occupied, out int x, out int y)
         {
             int cx = MapCell.X(center), cy = MapCell.Y(center);
             bool found = false; x = y = 0;
@@ -160,11 +159,11 @@ namespace Cartowords.MapPresentation
             return found;
         }
 
-        static bool IsFree(int left, int top, BuildingSize size, HashSet<long> occupied)
+        static bool IsFree(int left, int top, BuildingSize size, MapOccupancy occupied)
         {
             for (int dx = 0; dx < size.Width; dx++)
             for (int dy = 0; dy < size.Depth; dy++)
-                if (occupied.Contains(MapCell.Key(left + dx, top + dy))) return false;
+                if (!occupied.IsFree(left + dx, top + dy)) return false;
             return true;
         }
     }
