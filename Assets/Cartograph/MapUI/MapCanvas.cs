@@ -347,7 +347,14 @@ namespace Cartograph.MapUI
             }
             var natureCells = new HashSet<long>();
             foreach (var item in natureItems) natureCells.Add(MapCell.Key(item.X, item.Y));
-            npcs = MapNpc.Build(landByFile, occupancy, natureCells);
+            // 土地に空きマスがないノート(旗だけの土地)は、拠点のまわり 2 マス以内の空きマスに立つ。
+            var nearByFile = new Dictionary<string, HashSet<long>>(StringComparer.Ordinal);
+            foreach (var node in value.Nodes)
+            {
+                if (!nearByFile.TryGetValue(node.File, out var near)) nearByFile[node.File] = near = new HashSet<long>();
+                MapNpc.AddNearby(near, cells[node.Id], MapNpc.NearbyRange);
+            }
+            npcs = MapNpc.Build(landByFile, occupancy, natureCells, nearByFile);
         }
         private static bool HasArt(BuildingSize size, MapBuilding building, MapArt art)
             => size.Shape == BuildingShape.Tower ? art.TowerFor(size.Width, MapLayout.StableHash(building.File)) != null : art.Fixed(size.Shape) != null;
@@ -852,11 +859,25 @@ namespace Cartograph.MapUI
             var black = new Color32(0, 0, 0, 255);
             foreach (var crossing in roads.Crossings)
             {
-                float left = MapCell.X(crossing.Cell) * SubSize - SubSize, top = MapCell.Y(crossing.Cell) * SubSize - SubSize;
+                int cx = MapCell.X(crossing.Cell), cy = MapCell.Y(crossing.Cell);
+                float left = cx * SubSize - SubSize, top = cy * SubSize - SubSize;
+                // 上の道がまっすぐ続く前後のサブマスにも線を延ばす(曲がり・合流のサブマスには延ばさない)。
+                int straight = crossing.OverVertical ? 5 : 10;
+                int stepX = crossing.OverVertical ? 0 : 1, stepY = crossing.OverVertical ? 1 : 0;
+                bool before = roads.Mask.TryGetValue(MapCell.Key(cx - stepX, cy - stepY), out int mb) && mb == straight;
+                bool after = roads.Mask.TryGetValue(MapCell.Key(cx + stepX, cy + stepY), out int ma) && ma == straight;
+                float lead = before ? SubSize : 0, length = SubSize + lead + (after ? SubSize : 0);
                 if (crossing.OverVertical)
-                { WorldRectQuad(quads, left + 1, top, 2, SubSize, black); WorldRectQuad(quads, left + 13, top, 2, SubSize, black); }
+                {
+                    WorldRectQuad(quads, left + 1, top - lead, 2, length, black); WorldRectQuad(quads, left + 13, top - lead, 2, length, black);
+                    // 下の道が突き当たる所は、黒い線までの隙間を埋める。
+                    WorldRectQuad(quads, left, top + 3, 1, 10, black); WorldRectQuad(quads, left + 15, top + 3, 1, 10, black);
+                }
                 else
-                { WorldRectQuad(quads, left, top + 1, SubSize, 2, black); WorldRectQuad(quads, left, top + 13, SubSize, 2, black); }
+                {
+                    WorldRectQuad(quads, left - lead, top + 1, length, 2, black); WorldRectQuad(quads, left - lead, top + 13, length, 2, black);
+                    WorldRectQuad(quads, left + 3, top, 10, 1, black); WorldRectQuad(quads, left + 3, top + 15, 10, 1, black);
+                }
             }
         }
         // 奥行きの順に並べるための絵。Bottom は絵の下の辺の世界座標。

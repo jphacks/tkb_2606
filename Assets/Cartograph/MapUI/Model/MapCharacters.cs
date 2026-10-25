@@ -84,27 +84,58 @@ namespace Cartowords.MapPresentation
             => dx > 0 ? NpcFacing.Right : dx < 0 ? NpcFacing.Left : dy < 0 ? NpcFacing.Up : NpcFacing.Down;
 
         // 歩ける所 = そのファイルの土地で、占有(旗・道・建物)も追加の障害物(自然物)もないマス。
-        public static List<MapNpc> Build(IReadOnlyDictionary<string, HashSet<long>> landByFile, MapOccupancy occupancy, ICollection<long> blocked = null)
+        public const int NearbyRange = 2;
+
+        // center のまわり range マス以内(正方形)のマスを near に加える。
+        public static void AddNearby(HashSet<long> near, long center, int range)
+        {
+            int cx = MapCell.X(center), cy = MapCell.Y(center);
+            for (int dx = -range; dx <= range; dx++)
+            for (int dy = -range; dy <= range; dy++)
+                near.Add(MapCell.Key(cx + dx, cy + dy));
+        }
+
+        public static List<MapNpc> Build(IReadOnlyDictionary<string, HashSet<long>> landByFile, MapOccupancy occupancy, ICollection<long> blocked = null,
+            IReadOnlyDictionary<string, HashSet<long>> nearbyByFile = null)
         {
             var result = new List<MapNpc>();
             var files = new List<string>(landByFile.Keys); files.Sort(StringComparer.Ordinal);
             foreach (string file in files)
             {
-                var npc = BuildOne(file, landByFile[file], occupancy, blocked);
+                HashSet<long> nearby = null;
+                if (nearbyByFile != null && nearbyByFile.TryGetValue(file, out var raw))
+                {
+                    // 他のファイルの土地は避ける。
+                    nearby = new HashSet<long>();
+                    foreach (long key in raw)
+                    {
+                        bool others = false;
+                        foreach (string other in files) if (other != file && landByFile[other].Contains(key)) { others = true; break; }
+                        if (!others) nearby.Add(key);
+                    }
+                }
+                var npc = BuildOne(file, landByFile[file], occupancy, blocked, nearby);
                 if (npc != null) result.Add(npc);
             }
             return result;
         }
 
-        public static MapNpc BuildOne(string file, HashSet<long> land, MapOccupancy occupancy, ICollection<long> blocked = null)
+        public static MapNpc BuildOne(string file, HashSet<long> land, MapOccupancy occupancy, ICollection<long> blocked = null, HashSet<long> nearby = null)
         {
+            // 歩ける範囲は、まずファイルの土地。そこに空きマスがなければ、まわり(nearby)の空きマスまで広げる。
+            HashSet<long> area = land;
             bool Walk(int x, int y)
             {
                 long key = MapCell.Key(x, y);
-                return land.Contains(key) && (occupancy == null || occupancy.IsFree(x, y)) && (blocked == null || !blocked.Contains(key));
+                return area.Contains(key) && (occupancy == null || occupancy.IsFree(x, y)) && (blocked == null || !blocked.Contains(key));
             }
             var cells = new List<long>();
-            foreach (long key in land) if (Walk(MapCell.X(key), MapCell.Y(key))) cells.Add(key);
+            foreach (long key in area) if (Walk(MapCell.X(key), MapCell.Y(key))) cells.Add(key);
+            if (cells.Count == 0 && nearby != null && nearby.Count > 0)
+            {
+                area = new HashSet<long>(land); area.UnionWith(nearby);
+                foreach (long key in area) if (Walk(MapCell.X(key), MapCell.Y(key))) cells.Add(key);
+            }
             if (cells.Count == 0) return null;
             cells.Sort();
             int hash = MapLayout.StableHash(file);

@@ -159,6 +159,47 @@ namespace Cartograph.EditorUI.Tests
         }
 
         [Test]
+        public void FlagOnlyLandFallsBackToNearbyFreeCells()
+        {
+            var land = Block(5, 5, 1, 1);
+            var occupancy = new MapOccupancy();
+            occupancy.ReserveAround(MapCell.Key(5, 5), 1, OccupyKind.Flag);
+            Assert.That(Make("flag.md", land, occupancy), Is.Null);
+            var nearby = new HashSet<long>();
+            MapNpc.AddNearby(nearby, MapCell.Key(5, 5), MapNpc.NearbyRange);
+            var npc = MapNpc.BuildOne("flag.md", land, occupancy, null, nearby);
+            Assert.That(npc, Is.Not.Null);
+            foreach (long w in npc.Waypoints)
+            {
+                Assert.That(occupancy.IsFree(MapCell.X(w), MapCell.Y(w)), Is.True);
+                Assert.That(nearby.Contains(w), Is.True);
+            }
+            for (double t = 0; t < 100; t += 0.1)
+            {
+                var p = npc.At(t);
+                Assert.That(System.Math.Abs(p.X - 5), Is.LessThanOrEqualTo(2.001f));
+                Assert.That(System.Math.Abs(p.Y - 5), Is.LessThanOrEqualTo(2.001f));
+            }
+        }
+
+        [Test]
+        public void BuildGivesEveryFileAnNpcAndAvoidsOtherLand()
+        {
+            var land = new Dictionary<string, HashSet<long>> { ["a.md"] = Block(5, 5, 1, 1), ["b.md"] = Block(7, 5, 1, 1) };
+            var occupancy = new MapOccupancy();
+            occupancy.ReserveAround(MapCell.Key(5, 5), 1, OccupyKind.Flag);
+            occupancy.ReserveAround(MapCell.Key(7, 5), 1, OccupyKind.Flag);
+            var near = new Dictionary<string, HashSet<long>> { ["a.md"] = new HashSet<long>(), ["b.md"] = new HashSet<long>() };
+            MapNpc.AddNearby(near["a.md"], MapCell.Key(5, 5), MapNpc.NearbyRange);
+            MapNpc.AddNearby(near["b.md"], MapCell.Key(7, 5), MapNpc.NearbyRange);
+            var npcs = MapNpc.Build(land, occupancy, null, near);
+            Assert.That(npcs.Count, Is.EqualTo(2));
+            var again = MapNpc.Build(land, occupancy, null, near);
+            Assert.That(again.Select(n => n.File + Describe(n, 4.2)), Is.EqualTo(npcs.Select(n => n.File + Describe(n, 4.2))));
+            foreach (long w in npcs.First(n => n.File == "a.md").Waypoints) Assert.That(land["b.md"].Contains(w), Is.False);
+        }
+
+        [Test]
         public void EachFileGetsOneNpc()
         {
             var land = new Dictionary<string, HashSet<long>>();
