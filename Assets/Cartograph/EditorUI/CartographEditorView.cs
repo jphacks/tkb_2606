@@ -23,6 +23,7 @@ namespace Cartograph.EditorUI
         private IEditorWorkspace workspace;
         private VisualElement root;
         private NoteTreeView noteTree;
+        private NotebookLibraryDialog notebookLibrary;
         private SecondaryNotePane secondaryPane;
         private Label projectLabel, breadcrumb;
         private TextField title, body;
@@ -40,6 +41,8 @@ namespace Cartograph.EditorUI
         private ReviewedTextBinding reviewed;
         private TextField projectPath;
         private Button newNoteButton;
+        private Button newFolderButton;
+        private Button notebookPicker, notePicker, closeNotebookButton;
         private MapPanel mapPanel;
         private readonly MapSnapshotGate mapGate = new MapSnapshotGate();
         private string mapProjectKey = Guid.NewGuid().ToString("N"), mapVersionSignature;
@@ -126,10 +129,11 @@ namespace Cartograph.EditorUI
             var projectBar = Row(root); projectBar.style.paddingLeft = 24; projectBar.style.paddingRight = 24;
             projectBar.AddToClassList("project-bar");
             projectBar.style.flexShrink = 0;
-            projectPath = new TextField { label = "プロジェクト", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
+            projectBar.style.display = DisplayStyle.None;
+            projectPath = new TextField { label = "フォルダ名", tooltip = "notes と .cartograph を保存するフォルダの絶対パス" };
             projectPath.style.width = 360; projectPath.style.maxWidth = Length.Percent(55); projectBar.Add(projectPath);
             projectPath.textEdition.placeholder = "ファイルが選択されていません";
-            Button(projectBar, "ファイルを選択", SelectProjectFolder);
+            Button(projectBar, "フォルダを選択", SelectProjectFolder);
             Button(projectBar, "閉じる", RequestCloseProject);
 
             var main = new TwoPaneSplitView(0, 520, TwoPaneSplitViewOrientation.Horizontal);
@@ -144,17 +148,31 @@ namespace Cartograph.EditorUI
             workbench.style.flexGrow = 1; workbench.style.minHeight = 0;
             var sidebar = new VisualElement();
             sidebar.AddToClassList("sidebar");
-            sidebar.style.width = 145; sidebar.style.minWidth = 120; sidebar.style.flexShrink = 0;
+            sidebar.style.width = 185; sidebar.style.minWidth = 160; sidebar.style.flexShrink = 0;
             sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
             workbench.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
-            sidebar.Add(projectLabel);
+            notebookPicker = Button(sidebar, "ノート用フォルダを選ぶ ▾", OpenNotebookMenu);
+            notebookPicker.style.whiteSpace = WhiteSpace.NoWrap; notebookPicker.style.overflow = Overflow.Hidden;
+            notebookPicker.style.textOverflow = TextOverflow.Ellipsis;
+            notePicker = Button(sidebar, "ノートを選ぶ ▾", OpenNoteMenu);
+            closeNotebookButton = Button(sidebar, "閉じる", RequestCloseProject);
             newNoteButton = Button(sidebar, "＋ 新しいノート", () => Run(async () =>
             {
                 await CreateEditableNote();
             })); newNoteButton.AddToClassList("primary-action");
+            newFolderButton = Button(sidebar, "＋ フォルダ", () => RequestCreateFolder(noteTree.CurrentFolder));
             var scroll = new ScrollView(); scroll.style.flexGrow = 1; sidebar.Add(scroll);
             noteTree = new NoteTreeView(); scroll.Add(noteTree);
+            noteTree.CreateFolderRequested += RequestCreateFolder;
+            noteTree.FolderOpened += folder => Run(async () =>
+            {
+                if (workspace is ProjectEditorWorkspace target) await target.OpenFolder(folder);
+            });
+            noteTree.CreateNoteRequested += folder => Run(async () =>
+            {
+                if (workspace is ProjectEditorWorkspace target) await target.CreateDocumentInFolder(folder);
+            });
             noteTree.DeleteRequested += id =>
             {
                 var record = workspace.Documents.FirstOrDefault(d => d.id == id); if (record == null) return;
@@ -187,7 +205,7 @@ namespace Cartograph.EditorUI
             breadcrumb = new Label(); breadcrumb.style.fontSize = 12;
             breadcrumb.AddToClassList("muted");
             breadcrumb.style.whiteSpace = WhiteSpace.Normal; breadcrumb.style.marginBottom = 2;
-            noteHeader.Add(breadcrumb);
+            breadcrumb.style.display = DisplayStyle.None;
             var titleHint = new Label("ノート名（クリックして変更・Enterで確定）");
             titleHint.AddToClassList("muted"); titleHint.style.fontSize = 11;
             noteHeader.Add(titleHint);
@@ -213,7 +231,6 @@ namespace Cartograph.EditorUI
             Button(toolbar, "斜体", () => WrapSelection("*"));
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
-            Button(toolbar, "分割して開く", () => OpenNoteBeside(activeId, 1));
             relatedControl = new RelatedNotesControl(); paper.Add(relatedControl);
             relatedControl.ConnectionRequested += (targetId, connect) => Run(async () =>
             {
@@ -381,10 +398,13 @@ namespace Cartograph.EditorUI
             bool editingPath = pathFocus != null && (ReferenceEquals(pathFocus, projectPath) || projectPath.Contains(pathFocus));
             if (actualRoot != null && !editingPath) projectPath.SetValueWithoutNotify(actualRoot);
             mapPanel.SetProjectOpen(projectOpen);
+            notebookPicker.text = projectOpen ? ((workspace as ProjectEditorWorkspace)?.ProjectName ?? "ノート用フォルダ") + " ▾" : "ノート用フォルダを選ぶ ▾";
+            notePicker.SetEnabled(projectOpen); closeNotebookButton.SetEnabled(projectOpen);
             emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
-                "まだノートが開かれていません。\n上のプロジェクト欄から保存先フォルダを開いてください。";
+                "まだノートが開かれていません。\n左の「ノート用フォルダを選ぶ」から選択してください。";
             newNoteButton.SetEnabled(true);
             newNoteButton.style.display = projectOpen ? DisplayStyle.Flex : DisplayStyle.None;
+            newFolderButton.style.display = projectOpen ? DisplayStyle.Flex : DisplayStyle.None;
             newNoteButton.text = "＋ 新しいノート";
             body.tooltip = current == null ? "保存先を選び、ノートを作成すると入力できます。" : "本文を入力";
             title.isReadOnly = !projectOpen; body.isReadOnly = current == null;
@@ -507,7 +527,12 @@ namespace Cartograph.EditorUI
                 await OpenProjectFolder();
                 if (workspace.Current == null) await workspace.CreateDocument();
             }
-            else { await workspace.FlushSave(); await workspace.CreateDocument(); }
+            else
+            {
+                await workspace.FlushSave();
+                if (workspace is ProjectEditorWorkspace project) await project.CreateDocumentInFolder(noteTree.CurrentFolder);
+                else await workspace.CreateDocument();
+            }
             body.schedule.Execute(() => { if (rich.Enabled) rich.FocusRaw(0, 0); else { body.Focus(); body.SelectRange(0, 0); } });
         }
 
@@ -516,7 +541,69 @@ namespace Cartograph.EditorUI
             await OpenProjectAt(projectPath.value);
         }
 
+        private void OpenNotebookMenu()
+        {
+            if (busy) return;
+            var menu = new GenericDropdownMenu();
+            var active = (workspace as ProjectEditorWorkspace)?.ProjectRoot;
+            foreach (var folder in NotebookFolders())
+            {
+                string path = folder.Key;
+                menu.AddItem(folder.Value, string.Equals(path, active, StringComparison.OrdinalIgnoreCase), () => Run(() => OpenProjectAt(path)));
+            }
+            menu.AddSeparator("");
+            menu.AddItem("＋ 新規作成・保存先を追加…", false, SelectProjectFolder);
+            menu.DropDown(notebookPicker.worldBound, notebookPicker, default(DropdownMenuSizeMode));
+        }
+        private void OpenNoteMenu()
+        {
+            if (busy) return;
+            var menu = new GenericDropdownMenu();
+            foreach (var record in workspace.Documents.OrderBy(d => d.id, StringComparer.OrdinalIgnoreCase))
+            {
+                string id = record.id;
+                menu.AddItem(id.Replace("/", " › "), id == activeId, () => Run(async () =>
+                {
+                    await workspace.FlushSave(); await workspace.OpenDocument(id);
+                    noteTree.RevealNote(id); listSignature = null;
+                }));
+            }
+            if (workspace.Documents.Count == 0) menu.AddDisabledItem("ノートはまだありません", false);
+            menu.DropDown(notePicker.worldBound, notePicker, default(DropdownMenuSizeMode));
+        }
+        private KeyValuePair<string, string>[] NotebookFolders()
+        {
+            string library = System.IO.Path.Combine(Application.persistentDataPath, "Notebooks");
+            var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+            if (System.IO.Directory.Exists(library))
+                foreach (string path in System.IO.Directory.GetDirectories(library)) paths.Add(path);
+            foreach (string path in PlayerPrefs.GetString("CARTOWORDS.NotebookFolders", "").Split('\n'))
+                if (!string.IsNullOrWhiteSpace(path) && System.IO.Directory.Exists(path)) paths.Add(path);
+            string last = PlayerPrefs.GetString("CARTOWORDS.LastProject", "");
+            if (!string.IsNullOrWhiteSpace(last) && System.IO.Directory.Exists(last)) paths.Add(last);
+            string active = (workspace as ProjectEditorWorkspace)?.ProjectRoot;
+            if (!string.IsNullOrWhiteSpace(active) && System.IO.Directory.Exists(active)) paths.Add(active);
+            return paths.OrderBy(p => System.IO.Path.GetFileName(p), StringComparer.OrdinalIgnoreCase)
+                .Select(p => new KeyValuePair<string, string>(p, paths.Count(other => string.Equals(System.IO.Path.GetFileName(other), System.IO.Path.GetFileName(p), StringComparison.OrdinalIgnoreCase)) > 1
+                    ? System.IO.Path.GetFileName(p) + "（" + p + "）" : System.IO.Path.GetFileName(p))).ToArray();
+        }
         private void SelectProjectFolder()
+        {
+            if (busy) return;
+            if (notebookLibrary == null) { notebookLibrary = new NotebookLibraryDialog(BrowseProjectFolder); root.Add(notebookLibrary); }
+            string library = System.IO.Path.Combine(Application.persistentDataPath, "Notebooks");
+            var folders = NotebookFolders();
+            notebookLibrary.Show(folders, path => Execute(() => OpenProjectAt(path)), name => Execute(async () =>
+            {
+                name = (name ?? "").Trim();
+                if (!Cartograph.Core.NotePath.IsValidName(name) || name.StartsWith(".", StringComparison.Ordinal))
+                    throw new ArgumentException("フォルダ名に使えない文字が含まれています。");
+                string path = System.IO.Path.Combine(library, name);
+                if (System.IO.Directory.Exists(path) || System.IO.File.Exists(path)) throw new System.IO.IOException("同じ名前のフォルダがあります。");
+                System.IO.Directory.CreateDirectory(path); await OpenProjectAt(path);
+            }));
+        }
+        private void BrowseProjectFolder()
         {
 #if UNITY_EDITOR
             if (choosingProject || busy) return;
@@ -560,6 +647,11 @@ namespace Cartograph.EditorUI
             reviewed.Bind(null, null);
             secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
             ResetMapContext();
+            noteTree.ResetFolder(); listSignature = null;
+            var remembered = new HashSet<string>(PlayerPrefs.GetString("CARTOWORDS.NotebookFolders", "").Split('\n')
+                .Where(p => !string.IsNullOrWhiteSpace(p)), StringComparer.OrdinalIgnoreCase);
+            remembered.Add(projectPath.value);
+            PlayerPrefs.SetString("CARTOWORDS.NotebookFolders", string.Join("\n", remembered));
             PlayerPrefs.SetString("CARTOWORDS.LastProject", projectPath.value); PlayerPrefs.Save();
             QueueRepaint();
             HideProjectTransition();
@@ -825,6 +917,17 @@ namespace Cartograph.EditorUI
             count.text = $"{MarkdownTextCount.Count(body.value):N0} 文字（記号・改行を除く）";
         }
 
+        private void RequestCreateFolder(string parent)
+        {
+            if (!(workspace is ProjectEditorWorkspace target) || target.Tree == null) return;
+            var tree = target.Tree;
+            noteDialog.ShowCreateFolder(FolderPaths(tree), parent, (folder, name) => Execute(() =>
+            {
+                if (!ReferenceEquals(tree, target.Tree)) throw new InvalidOperationException("保存先を選び直してください。");
+                target.CreateFolder(folder, name); listSignature = null;
+                return Task.CompletedTask;
+            }));
+        }
         private void RequestRename(string id)
         {
             var target = workspace as ProjectEditorWorkspace;

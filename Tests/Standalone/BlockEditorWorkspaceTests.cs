@@ -10,6 +10,47 @@ namespace Cartograph.IntegrationTests
     public sealed class BlockEditorWorkspaceTests
     {
         [Test]
+        public async Task FolderNavigationOpensOnlyDirectNotesAndEmptyFolderClearsCurrent()
+        {
+            var env = new Env(); env.PutNote("a/親のノート", "本文"); env.PutNote("a/b/子のノート", "本文");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            source.CreateFolder("", "空");
+            await source.OpenFolder("a"); Assert.That(source.Current.id, Is.EqualTo("a/親のノート"));
+            await source.OpenFolder("a/b"); Assert.That(source.Current.id, Is.EqualTo("a/b/子のノート"));
+            await source.OpenFolder("空"); Assert.That(source.Current, Is.Null);
+            await source.CreateDocumentInFolder("空"); Assert.That(source.Current.id, Is.EqualTo("空/無題のノート"));
+            await source.FlushSave();
+        }
+        [Test]
+        public async Task RenamingChapterUpdatesIncomingLinksAndPreservesHeadingAndCode()
+        {
+            var env = new Env();
+            env.PutNote("A", "# A\n[[B]]\n[[B#見出し]]\n```\n[[B]]\n```\n");
+            env.PutNote("B", "# 見出し\n[[A]]\n");
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            await source.RenameDocument("B", "新しい名前");
+            var a = await source.LoadDocument("A");
+            Assert.That(a.markdown, Is.EqualTo("# A\n[[新しい名前]]\n[[新しい名前#見出し]]\n```\n[[B]]\n```\n"));
+            var reopened = new ProjectEditorWorkspace(env.Options, env.Fs); await reopened.OpenProject(env.Paths.Root);
+            Assert.That((await reopened.LoadDocument("A")).markdown, Is.EqualTo(a.markdown));
+            Assert.That((await reopened.LoadDocument("新しい名前")).markdown, Is.EqualTo("# 見出し\n[[A]]\n"));
+            await reopened.FlushSave();
+        }
+        [Test]
+        public async Task NestedFoldersAndNotesSurviveReopening()
+        {
+            var env = new Env();
+            var source = new ProjectEditorWorkspace(env.Options, env.Fs); await source.OpenProject(env.Paths.Root);
+            source.CreateFolder("", "大学"); source.CreateFolder("大学", "授業");
+            await source.CreateDocumentInFolder("大学/授業");
+            Assert.That(source.Current.id, Is.EqualTo("大学/授業/無題のノート"));
+            var reopened = new ProjectEditorWorkspace(env.Options, env.Fs); await reopened.OpenProject(env.Paths.Root);
+            Assert.That(reopened.Tree.Folders[0].Folders[0].Name, Is.EqualTo("授業"));
+            Assert.Throws<System.IO.IOException>(() => reopened.CreateFolder("大学", "授業"));
+            Assert.Throws<ArgumentException>(() => reopened.CreateFolder("", "../外"));
+            await source.FlushSave(); await reopened.FlushSave();
+        }
+        [Test]
         public async Task UndoUsesEditDiffInsteadOfTheLaterSelectAllRange()
         {
             var env = new Env(); env.PutNote("A", "abc\ndef");

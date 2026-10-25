@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cartograph.EditorUI.Navigation;
 using UnityEngine.UIElements;
 
@@ -7,27 +8,70 @@ namespace Cartograph.EditorUI
 {
     public sealed class NoteTreeView : VisualElement
     {
-        private readonly Dictionary<string, bool> expanded = new Dictionary<string, bool>();
+        private NoteTreeNode root;
+        private string activeId, emptyText;
+        public string CurrentFolder { get; private set; } = "";
+        public void ResetFolder() { CurrentFolder = ""; }
+        public void RevealNote(string id)
+        {
+            int slash = (id ?? "").LastIndexOf('/');
+            CurrentFolder = slash < 0 ? "" : id.Substring(0, slash);
+        }
         public event Action<string> NoteSelected;
         public event Action<string> DeleteRequested;
         public event Action<string> RenameRequested;
+        public event Action<string> CreateFolderRequested;
+        public event Action<string> CreateNoteRequested;
+        public event Action<string> FolderOpened;
+        private void NavigateTo(string path) { ShowFolder(path); FolderOpened?.Invoke(CurrentFolder); }
 
         public void Render(NoteTreeNode root, string activeDocumentId, string emptyMessage = "ノートはまだありません")
         {
-            Clear();
-            if (root.Children.Count == 0) Add(new Label(emptyMessage));
-            foreach (var node in root.Children) AddNode(this, node, activeDocumentId);
+            this.root = root; activeId = activeDocumentId; emptyText = emptyMessage;
+            ShowFolder(CurrentFolder);
         }
 
+        private NoteTreeNode FindFolder(NoteTreeNode node, string path)
+        {
+            if (node.Path == path) return node;
+            foreach (var child in node.Children.Where(n => n.IsFolder))
+            { var found = FindFolder(child, path); if (found != null) return found; }
+            return null;
+        }
+        private void ShowFolder(string path)
+        {
+            var folder = FindFolder(root, path) ?? root;
+            CurrentFolder = folder.Path; Clear();
+            if (CurrentFolder.Length > 0)
+            {
+                Add(new Button(() => NavigateTo(CurrentFolder.Contains("/") ? CurrentFolder.Substring(0, CurrentFolder.LastIndexOf('/')) : "")) { text = "← 戻る" });
+                var location = new Label(CurrentFolder) { tooltip = CurrentFolder };
+                location.style.whiteSpace = WhiteSpace.NoWrap; location.style.overflow = Overflow.Hidden;
+                location.style.textOverflow = TextOverflow.Ellipsis; Add(location);
+            }
+            if (folder.Children.Count == 0 && !string.IsNullOrEmpty(emptyText)) Add(new Label(emptyText));
+            foreach (var note in folder.Children.Where(n => !n.IsFolder)) AddNode(this, note, activeId);
+            foreach (var child in folder.Children.Where(n => n.IsFolder)) AddNode(this, child, activeId);
+        }
         private void AddNode(VisualElement parent, NoteTreeNode node, string activeId)
         {
             if (node.IsFolder)
             {
-                var foldout = new Foldout { text = node.Name, value = !expanded.TryGetValue(node.Path, out var open) || open };
-                foldout.AddToClassList("town-folder");
-                foldout.RegisterValueChangedCallback(evt => { expanded[node.Path] = evt.newValue; evt.StopPropagation(); });
-                parent.Add(foldout);
-                foreach (var child in node.Children) AddNode(foldout, child, activeId);
+                var header = new Button(() => NavigateTo(node.Path)) { text = "▸ " + node.Name, tooltip = node.Path + "（クリックで開く・右クリックでメニュー）" };
+                header.AddToClassList("note-row");
+                header.style.whiteSpace = WhiteSpace.NoWrap; header.style.textOverflow = TextOverflow.Ellipsis;
+                header.style.overflow = Overflow.Hidden; header.style.height = 30;
+                header.style.unityTextAlign = UnityEngine.TextAnchor.MiddleLeft;
+                parent.Add(header);
+                header.RegisterCallback<PointerUpEvent>(evt =>
+                {
+                    if (evt.button != 1) return;
+                    evt.StopImmediatePropagation();
+                    var menu = new GenericDropdownMenu();
+                    menu.AddItem("この中にノートを作成", false, () => CreateNoteRequested?.Invoke(node.Path));
+                    menu.AddItem("この中にフォルダを作成", false, () => CreateFolderRequested?.Invoke(node.Path));
+                    menu.DropDown(new UnityEngine.Rect(evt.position.x, evt.position.y, 1, 1), header, default(DropdownMenuSizeMode));
+                });
             }
             else
             {
@@ -38,25 +82,27 @@ namespace Cartograph.EditorUI
                 {
                     text = label, tooltip = note.RelativePath, focusable = false
                 };
-                button.style.whiteSpace = WhiteSpace.Normal;
+                button.style.whiteSpace = WhiteSpace.NoWrap;
+                button.style.overflow = Overflow.Hidden; button.style.textOverflow = TextOverflow.Ellipsis;
+                button.style.height = 30; button.style.maxHeight = 30;
                 button.AddToClassList("note-row");
                 if (selected) button.AddToClassList("note-row--selected");
                 button.style.minHeight = 30;
                 button.style.unityTextAlign = UnityEngine.TextAnchor.MiddleLeft;
                 var row = new VisualElement(); row.style.flexDirection = FlexDirection.Row;
                 button.style.flexGrow = 1; button.style.flexShrink = 1; button.style.minWidth = 0;
-                var menu = new VisualElement(); menu.style.display = DisplayStyle.None;
-                menu.AddToClassList("note-mini-menu");
-                menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; NoteSelected?.Invoke(note.DocumentId); }) { text = "開く" });
-                menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; RenameRequested?.Invoke(note.DocumentId); }) { text = "名前を変更…" });
-                menu.Add(new Button(() => { menu.style.display = DisplayStyle.None; DeleteRequested?.Invoke(note.DocumentId); }) { text = "削除…" });
-                menu.Add(new Button(() => menu.style.display = DisplayStyle.None) { text = "閉じる" });
-                var more = new Button(() => menu.style.display = menu.style.display.value == DisplayStyle.None ? DisplayStyle.Flex : DisplayStyle.None)
-                    { text = "⋯", tooltip = "ノートのメニュー" };
-                more.style.width = 24; more.style.paddingLeft = more.style.paddingRight = 2;
+                button.tooltip = note.RelativePath + "（右クリックで名前変更・削除）";
                 button.RegisterCallback<PointerUpEvent>(evt =>
-                { if (evt.button == 1) { menu.style.display = DisplayStyle.Flex; evt.StopPropagation(); } });
-                row.Add(button); row.Add(more); parent.Add(row); parent.Add(menu);
+                {
+                    if (evt.button != 1) return;
+                    evt.StopImmediatePropagation();
+                    var menu = new GenericDropdownMenu();
+                    menu.AddItem("開く", false, () => NoteSelected?.Invoke(note.DocumentId));
+                    menu.AddItem("名前を変更…", false, () => RenameRequested?.Invoke(note.DocumentId));
+                    menu.AddItem("削除…", false, () => DeleteRequested?.Invoke(note.DocumentId));
+                    menu.DropDown(new UnityEngine.Rect(evt.position.x, evt.position.y, 1, 1), button, default(DropdownMenuSizeMode));
+                });
+                row.Add(button); parent.Add(row);
             }
         }
     }
