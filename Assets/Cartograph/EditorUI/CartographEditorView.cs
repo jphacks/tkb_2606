@@ -89,8 +89,9 @@ namespace Cartograph.EditorUI
             if (document.panelSettings == null)
             {
                 ownedPanel = ScriptableObject.CreateInstance<PanelSettings>();
+                // 拡大率は ApplyUiScale が画面の大きさから決める(ScaleWithScreenSize だと上限・下限を置けない)。
                 ownedPanel.scaleMode = PanelScaleMode.ConstantPixelSize;
-                ownedPanel.scale = 1;
+                ownedPanel.scale = UiScaleFor(Screen.width, Screen.height);
                 ownedPanel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("CartographTheme");
                 document.panelSettings = ownedPanel;
             }
@@ -137,18 +138,19 @@ namespace Cartograph.EditorUI
             Button(projectBar, "閉じる", RequestCloseProject);
 
             // 左から 索引 | マップ | エディタ。境界はドラッグで動かせ、幅は次回起動時に復元する。
-            var main = new TwoPaneSplitView(0, SavedWidth(IndexWidthKey, 230), TwoPaneSplitViewOrientation.Horizontal);
+            ApplyUiScale();
+            var main = new TwoPaneSplitView(0, PaneWidth(IndexRatioKey, 0.14f, 200, 320), TwoPaneSplitViewOrientation.Horizontal);
             main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
             var sidebar = new VisualElement();
             sidebar.AddToClassList("sidebar");
             sidebar.style.minWidth = 170;
             sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
             main.Add(sidebar);
-            var contentSplit = new TwoPaneSplitView(0, SavedWidth(MapWidthKey, 340), TwoPaneSplitViewOrientation.Horizontal);
+            var contentSplit = new TwoPaneSplitView(0, PaneWidth(MapRatioKey, 0.36f, 280, 1100), TwoPaneSplitViewOrientation.Horizontal);
             contentSplit.style.flexGrow = 1; contentSplit.style.minWidth = 0; main.Add(contentSplit);
-            RememberWidth(sidebar, IndexWidthKey);
+            RememberRatio(main, sidebar, IndexRatioKey);
             mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
-            RememberWidth(mapPanel, MapWidthKey);
+            RememberRatio(contentSplit, mapPanel, MapRatioKey);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
             mapPanel.CandidateAccepted += AcceptCandidate;
             mapPanel.CandidateRejected += RejectCandidate;
@@ -346,6 +348,7 @@ namespace Cartograph.EditorUI
 #if ENABLE_INPUT_SYSTEM
             TrackKeyboard();
 #endif
+            ApplyUiScale(); // ウィンドウの大きさが変わったら、拡大率を合わせ直す
             if (root == null || workspace == null) return;
             if (busy || Composing) { UpdateSaveStatus(); return; }
             // The frame after IME confirmation also submits the final value.
@@ -1018,21 +1021,45 @@ namespace Cartograph.EditorUI
                 workspace.State == SaveState.Saved ? "保存済み" : "未保存";
         }
 
-        private const string IndexWidthKey = "CARTOWORDS.IndexWidth";
-        private const string MapWidthKey = "CARTOWORDS.MapWidth";
-        private static float SavedWidth(string key, float fallback)
+        // ---- 画面サイズへの追従 -----------------------------------------------------------
+        // UI の拡大率は、画面(ゲームビュー)の大きさに合わせて決める。基準は 1600x900 で 1.0。
+        // 小さい画面で大きすぎず、大きい画面で小さすぎないよう、幅・高さの小さいほうの比で、範囲を区切る。
+        private const float ReferenceWidth = 1600f, ReferenceHeight = 900f, MinUiScale = 0.75f, MaxUiScale = 2f;
+        internal static float UiScaleFor(float width, float height)
         {
-            var saved = PlayerPrefs.GetFloat(key, fallback);
-            return saved < 120 || saved > 2000 ? fallback : saved;
+            if (width <= 0 || height <= 0) return 1f;
+            return Mathf.Clamp(Mathf.Min(width / ReferenceWidth, height / ReferenceHeight), MinUiScale, MaxUiScale);
         }
-        // 分割の固定側ペインの幅を、ドラッグ後に保存する。
-        private static void RememberWidth(VisualElement pane, string key)
+        private int appliedScreenWidth, appliedScreenHeight;
+        private void ApplyUiScale()
         {
-            pane.RegisterCallback<GeometryChangedEvent>(evt =>
+            if (ownedPanel == null || (Screen.width == appliedScreenWidth && Screen.height == appliedScreenHeight)) return;
+            appliedScreenWidth = Screen.width; appliedScreenHeight = Screen.height;
+            ownedPanel.scale = UiScaleFor(Screen.width, Screen.height);
+        }
+        // 論理ピクセル(拡大率を引いた後)での画面幅。
+        private float LogicalWidth() => Screen.width / (ownedPanel != null ? Mathf.Max(0.1f, ownedPanel.scale) : 1f);
+
+        // 索引とマップの幅は、画面幅に対する割合で決める。ユーザーがドラッグで動かした時だけ、その割合を保存する。
+        private const string IndexRatioKey = "CARTOWORDS.IndexRatio";
+        private const string MapRatioKey = "CARTOWORDS.MapRatio";
+        private float PaneWidth(string key, float defaultRatio, float min, float max)
+        {
+            float width = LogicalWidth();
+            float ratio = PlayerPrefs.GetFloat(key, defaultRatio);
+            if (ratio < 0.05f || ratio > 0.8f) ratio = defaultRatio;
+            return Mathf.Clamp(width * ratio, min, max);
+        }
+        // 分割のつまみを離した時に、固定側ペインの幅の割合を保存する。
+        private void RememberRatio(TwoPaneSplitView split, VisualElement pane, string key)
+        {
+            var handle = split.Q(className: "unity-two-pane-split-view__dragline-anchor");
+            if (handle == null) return;
+            handle.RegisterCallback<PointerUpEvent>(_ =>
             {
-                if (evt.newRect.width < 120 || Mathf.Approximately(evt.newRect.width, evt.oldRect.width)) return;
-                PlayerPrefs.SetFloat(key, evt.newRect.width);
-            });
+                float width = LogicalWidth();
+                if (width > 1 && pane.resolvedStyle.width >= 100) PlayerPrefs.SetFloat(key, pane.resolvedStyle.width / width);
+            }, TrickleDown.TrickleDown);
         }
 
         private static VisualElement Row(VisualElement parent)

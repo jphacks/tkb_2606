@@ -56,12 +56,13 @@ namespace Cartograph.EditorUI
             Add(search);
 
             var sortRow = new VisualElement(); sortRow.style.flexDirection = FlexDirection.Row; sortRow.style.flexShrink = 0;
+            sortRow.style.flexWrap = Wrap.Wrap; // 索引が狭いときは折り返す
             sortKeyButton = new Button(OpenSortMenu) { tooltip = "並べ替えの基準" };
             directionButton = new Button(() => SetSort(new NoteTreeSort(sort.Key, !sort.Descending, sort.FoldersFirst))) { };
             foldersButton = new Button(() => SetSort(new NoteTreeSort(sort.Key, sort.Descending, !sort.FoldersFirst))) { };
             foreach (var button in new[] { sortKeyButton, directionButton, foldersButton })
             { button.style.marginRight = 3; button.style.marginBottom = 3; sortRow.Add(button); }
-            sortKeyButton.style.flexGrow = 1; sortKeyButton.style.flexShrink = 1; sortKeyButton.style.minWidth = 0;
+            sortKeyButton.style.flexShrink = 0;
             Add(sortRow);
 
             list.style.flexGrow = 1; list.style.minHeight = 0;

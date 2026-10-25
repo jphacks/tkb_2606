@@ -111,7 +111,12 @@ namespace Cartograph.MapUI
                 if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || collapsing.Count > 0 || appearing.Count > 0) MarkDirtyRepaint();
             }).Every(140);
             RegisterCallback<GeometryChangedEvent>(_ =>
-            { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
+            {
+                if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
+                // まだ動かしていない地図は、パネルの大きさが変わるたびに全体が収まるよう合わせ直す。
+                else if (!userMoved && contentRect.width > 1 && snapshot != null && snapshot.Nodes.Count > 0) Fit();
+                else UpdateLabels();
+            });
             RegisterCallback<PointerDownEvent>(evt =>
             {
                 UserTouched();
@@ -226,6 +231,9 @@ namespace Cartograph.MapUI
             overviewDirty = true;
             pendingFit = firstData;
             if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
+            // 最初の地図は、画面の分割や拡大率が落ち着いたあとの大きさに合わせて、もう一度全体を収める。
+            if (firstData && value != null && value.Nodes.Count > 0)
+                schedule.Execute(() => { if (!userMoved && contentRect.width > 1) Fit(); }).StartingIn(400);
             MapProfile.Stop("set.total", setStart);
             Repaint();
             if (value != null && !MapLayoutFile.Same(positions, reportedLayout))
@@ -373,8 +381,10 @@ namespace Cartograph.MapUI
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
         public void Zoom(float factor) { UserTouched(); viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
         // ユーザーがマップを操作した。動いている自動スクロールをやめ、しばらく自動スクロールを止める。
+        private bool userMoved;
         private void UserTouched()
         {
+            userMoved = true;
             inputGate.Touch(Time.realtimeSinceStartup);
             panJob?.Pause(); panTween = null;
         }
