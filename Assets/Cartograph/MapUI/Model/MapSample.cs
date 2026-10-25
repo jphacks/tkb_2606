@@ -2,7 +2,7 @@ using System.Collections.Generic;
 
 namespace Cartowords.MapPresentation
 {
-    // 「表示サンプル」の地図。地図の見方そのものを説明するため、拠点の見出しが、そこに置かれたものの説明になっている。
+    // 地図の描画が扱う要素を一通りそろえた固定の地図(描画の確認用。MapSampleTests が使う)。画面の「表示サンプル」は、これではなくメモリ上のデモプロジェクト(Core の DemoProject)を開く。
     public static class MapSample
     {
         public static MapSnapshot Build()

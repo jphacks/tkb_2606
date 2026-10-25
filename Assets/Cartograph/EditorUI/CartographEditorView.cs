@@ -27,7 +27,7 @@ namespace Cartograph.EditorUI
         private SecondaryNotePane secondaryPane;
         private Label projectLabel, breadcrumb;
         private TextField title, body;
-        private Label status, count, message, pasteNotice;
+        private Label status, count, message, pasteNotice, demoBanner;
         private Button undoButton, redoButton;
         private VisualElement formatToolbar;
         private readonly Dictionary<string, TextUndoHistory> undoHistories = new Dictionary<string, TextUndoHistory>();
@@ -127,6 +127,14 @@ namespace Cartograph.EditorUI
             var tagline = new Label(" /  自分の言葉で、地図をつくる");
             tagline.style.flexGrow = 1; tagline.AddToClassList("muted"); header.Add(tagline);
             status = new Label(); status.AddToClassList("save-status"); header.Add(status);
+            // デモプロジェクトを開いている間だけ出す。ノートはメモリ上だけにあり、保存されない。
+            demoBanner = new Label("デモです。ここで書いた内容は保存されず、「閉じる」を押すと消えます。");
+            demoBanner.style.display = DisplayStyle.None; demoBanner.style.flexShrink = 0;
+            demoBanner.style.paddingLeft = 24; demoBanner.style.paddingRight = 24; demoBanner.style.paddingTop = 3; demoBanner.style.paddingBottom = 3;
+            demoBanner.style.fontSize = 14; demoBanner.style.unityTextAlign = TextAnchor.MiddleCenter;
+            demoBanner.style.backgroundColor = (Color)new Color32(246, 214, 112, 255);
+            demoBanner.style.color = (Color)new Color32(60, 44, 8, 255);
+            root.Add(demoBanner);
             var projectBar = Row(root); projectBar.style.paddingLeft = 24; projectBar.style.paddingRight = 24;
             projectBar.AddToClassList("project-bar");
             projectBar.style.flexShrink = 0;
@@ -150,6 +158,7 @@ namespace Cartograph.EditorUI
             contentSplit.style.flexGrow = 1; contentSplit.style.minWidth = 0; main.Add(contentSplit);
             mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
+            mapPanel.SampleRequested += () => Run(OpenDemoProject);
             mapPanel.CandidateAccepted += AcceptCandidate;
             mapPanel.CandidateRejected += RejectCandidate;
             mapPanel.LayoutChanged += QueueLayoutSave;
@@ -428,6 +437,9 @@ namespace Cartograph.EditorUI
             bool editingPath = pathFocus != null && (ReferenceEquals(pathFocus, projectPath) || projectPath.Contains(pathFocus));
             if (actualRoot != null && !editingPath) projectPath.SetValueWithoutNotify(actualRoot);
             mapPanel.SetProjectOpen(projectOpen);
+            bool demoOpen = projectOpen && (workspace as ProjectEditorWorkspace)?.IsDemo == true;
+            mapPanel.SetDemo(demoOpen);
+            demoBanner.style.display = demoOpen ? DisplayStyle.Flex : DisplayStyle.None;
             notebookPicker.text = projectOpen ? ((workspace as ProjectEditorWorkspace)?.ProjectName ?? "ノート用フォルダ") + " ▾" : "ノート用フォルダを選ぶ ▾";
             notePicker.SetEnabled(projectOpen); closeNotebookButton.SetEnabled(projectOpen);
             emptyNoteMessage.text = projectOpen ? "まだノートが開かれていません。\n「新しいノート」で書き始められます。" :
@@ -688,6 +700,25 @@ namespace Cartograph.EditorUI
             remembered.Add(projectPath.value);
             PlayerPrefs.SetString("CARTOWORDS.NotebookFolders", string.Join("\n", remembered));
             PlayerPrefs.SetString("CARTOWORDS.LastProject", projectPath.value); PlayerPrefs.Save();
+            QueueRepaint();
+            HideProjectTransition();
+        }
+        // 「表示サンプル」: メモリ上だけのデモプロジェクトを、ふつうのプロジェクトと同じ道で開く。
+        // 最近開いた場所や位置の保存など、ディスクや設定への記録は一切しない。
+        private async Task OpenDemoProject()
+        {
+            ShowProjectTransition();
+            await Task.Yield();
+            var target = workspace as ProjectEditorWorkspace;
+            if (target == null) throw new InvalidOperationException("通常モードで起動してください。");
+            FlushMapLayout();
+            try { await target.OpenDemo(); }
+            catch { HideProjectTransition(); throw; }
+            projectPath.SetValueWithoutNotify("");
+            reviewed.Bind(null, null);
+            secondaryPane.Hide(); activeId = null; undoHistories.Clear(); listSignature = null;
+            ResetMapContext();
+            noteTree.ResetFolder(); listSignature = null;
             QueueRepaint();
             HideProjectTransition();
         }
@@ -1009,9 +1040,10 @@ namespace Cartograph.EditorUI
                 secondaryPane.Hide(); reviewed.Bind(null, null); activeId = null; undoHistories.Clear();
                 ResetMapContext();
             });
-            bool pending = Composing || (rich.Enabled ? rich.HasPending : reviewed.HasPending) ||
+            // デモは、もともと保存されないので、閉じる前の確認は出さない。
+            bool pending = !(workspace is ProjectEditorWorkspace demo && demo.IsDemo) && (Composing || (rich.Enabled ? rich.HasPending : reviewed.HasPending) ||
                 secondaryPane.HasPending || workspace.State != SaveState.Saved ||
-                (workspace is ProjectEditorWorkspace book && book.ProjectRoot != null && title.value != submittedTitle);
+                (workspace is ProjectEditorWorkspace book && book.ProjectRoot != null && title.value != submittedTitle));
             if (pending) noteDialog.ShowCloseConfirmation(close);
             else RunClose(close);
         }
@@ -1025,8 +1057,8 @@ namespace Cartograph.EditorUI
         {
             bool pending = Composing || (rich.Enabled ? rich.HasPending : reviewed.HasPending) || secondaryPane.HasPending ||
                 (activeId != null && title.value != submittedTitle);
-            status.text = workspace.Current == null ? "プロジェクト・ノート未選択" :
-                !workspace.IsPersistent ? "デモ：保存されません" :
+            status.text = !workspace.IsPersistent ? "デモ：保存されません" :
+                workspace.Current == null ? "プロジェクト・ノート未選択" :
                 workspace.State == SaveState.Error ? "保存失敗・未保存" :
                 pending || workspace.State == SaveState.Dirty || workspace.State == SaveState.Saving ? "保存中…" :
                 workspace.State == SaveState.Saved ? "保存済み" : "未保存";
