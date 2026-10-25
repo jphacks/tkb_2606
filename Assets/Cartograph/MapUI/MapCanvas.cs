@@ -39,7 +39,8 @@ namespace Cartograph.MapUI
         private string selected, lastClick;
         // 選んだ関連ノートの候補(MapCandidate.Key)。拠点の選択とは別に点線を太く示す。
         private string selectedCandidate;
-        public event Action<MapCandidate> CandidateSelected;
+        /// <summary>候補の点線を選んだ。第2引数は、クリックした位置(地図の左上が原点)。</summary>
+        public event Action<MapCandidate, Vector2> CandidateSelected;
         public void ClearCandidateSelection() { if (selectedCandidate != null) { selectedCandidate = null; Repaint(); } }
         private const float CandidateReach = 8f;
         private static float DistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
@@ -453,7 +454,7 @@ namespace Cartograph.MapUI
             {
                 selected = null; lastClick = null;
                 var candidate = CandidateAt(at);
-                if (candidate != null) { selectedCandidate = candidate.Key; CandidateSelected?.Invoke(candidate); }
+                if (candidate != null) { selectedCandidate = candidate.Key; CandidateSelected?.Invoke(candidate, at); }
                 Repaint(); return;
             }
             selected = closest; NodeSelected?.Invoke(nodes[closest]);

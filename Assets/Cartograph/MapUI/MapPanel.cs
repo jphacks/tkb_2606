@@ -2,6 +2,7 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using Cartowords.MapPresentation;
+using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace Cartograph.MapUI
@@ -50,9 +51,10 @@ namespace Cartograph.MapUI
             candidateBar.Add(new Button(() => ResolveCandidate(true)) { text = "つなぐ", tooltip = "このノートどうしを関連づけます(リンクを書き足します)" });
             candidateBar.Add(new Button(() => ResolveCandidate(false)) { text = "却下", tooltip = "この候補はもう提案しません" });
             Add(candidateBar);
-            canvas.CandidateSelected += candidate =>
+            canvas.CandidateSelected += (candidate, at) =>
             {
                 shownCandidate = candidate; candidateBar.style.display = isPreview ? DisplayStyle.None : DisplayStyle.Flex;
+                PlaceCandidateBar(at);
                 info.text = "関連の候補: " + candidate.FromNote + " と " + candidate.ToNote + " / " + candidate.Reason;
             };
             canvas.NodeSelected += node => { HideCandidate(); info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く"; };
@@ -78,6 +80,18 @@ namespace Cartograph.MapUI
         private MapCandidate shownCandidate;
         public event Action<MapCandidate> CandidateAccepted;
         public event Action<MapCandidate> CandidateRejected;
+        // クリックした位置の右上に出す。パネルからはみ出す時は内側に寄せる。大きさは、出した直後の配置が済むまで分からないので、見積もりも使う。
+        private const float BarGap = 10f, EstimatedBarWidth = 150f, EstimatedBarHeight = 40f;
+        private void PlaceCandidateBar(Vector2 at)
+        {
+            candidateBar.style.bottom = StyleKeyword.Auto;
+            float width = float.IsNaN(candidateBar.resolvedStyle.width) || candidateBar.resolvedStyle.width < 1 ? EstimatedBarWidth : candidateBar.resolvedStyle.width;
+            float height = float.IsNaN(candidateBar.resolvedStyle.height) || candidateBar.resolvedStyle.height < 1 ? EstimatedBarHeight : candidateBar.resolvedStyle.height;
+            float x = at.x + BarGap, y = at.y - height - BarGap;
+            if (layout.width > 1) x = Mathf.Clamp(x, 4, Mathf.Max(4, layout.width - width - 4));
+            if (layout.height > 1) y = Mathf.Clamp(y, 4, Mathf.Max(4, layout.height - height - 4));
+            candidateBar.style.left = x; candidateBar.style.top = y;
+        }
         private void HideCandidate()
         { shownCandidate = null; candidateBar.style.display = DisplayStyle.None; canvas.ClearCandidateSelection(); }
         private void ResolveCandidate(bool accept)

@@ -114,7 +114,7 @@
     border-radius: 6px; padding: 8px 10px;
 }
 .cartowords .map-candidate-bar {
-    position: absolute; bottom: 118px; left: 12px; flex-direction: row;
+    position: absolute; flex-direction: row;
     padding: 4px; border-radius: 7px; background-color: rgba(10, 20, 33, 0.93);
     border-width: 1px; border-color: rgb(88, 188, 210);
 }

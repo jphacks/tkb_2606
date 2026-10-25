@@ -148,15 +148,18 @@ namespace Cartograph.EditorUI
             main.Add(sidebar);
             var contentSplit = new TwoPaneSplitView(0, PaneWidth(MapRatioKey, 0.36f, 280, 1100), TwoPaneSplitViewOrientation.Horizontal);
             contentSplit.style.flexGrow = 1; contentSplit.style.minWidth = 0; main.Add(contentSplit);
-            RememberRatio(main, sidebar, IndexRatioKey);
             mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
-            RememberRatio(contentSplit, mapPanel, MapRatioKey);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
             mapPanel.CandidateAccepted += AcceptCandidate;
             mapPanel.CandidateRejected += RejectCandidate;
             mapPanel.LayoutChanged += QueueLayoutSave;
             var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
             rightWorkspace.style.minWidth = 420; rightWorkspace.style.flexGrow = 1; contentSplit.Add(rightWorkspace);
+            // つまみは、2 つのペインが入ってから作られる。
+            RememberRatio(contentSplit, mapPanel, MapRatioKey);
+            SplitResizeCursor.Attach(contentSplit, root);
+            RememberRatio(main, sidebar, IndexRatioKey);
+            SplitResizeCursor.Attach(main, root);
             var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
             var workbench = Row(rightWorkspace); workbench.AddToClassList("workbench");
             workbench.style.flexGrow = 1; workbench.style.minHeight = 0;
@@ -1053,7 +1056,7 @@ namespace Cartograph.EditorUI
         // 分割のつまみを離した時に、固定側ペインの幅の割合を保存する。
         private void RememberRatio(TwoPaneSplitView split, VisualElement pane, string key)
         {
-            var handle = split.Q(className: "unity-two-pane-split-view__dragline-anchor");
+            var handle = SplitResizeCursor.HandleOf(split);
             if (handle == null) return;
             handle.RegisterCallback<PointerUpEvent>(_ =>
             {
