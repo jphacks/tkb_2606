@@ -97,6 +97,20 @@ namespace Cartograph.Core
             return await OpenNote(note);
         }
 
+        public string CreateFolder(string parent, string name)
+        {
+            parent = parent ?? ""; name = (name ?? "").Trim();
+            if (!NotePath.IsValidName(name) || name.StartsWith(".", StringComparison.Ordinal))
+                throw new ArgumentException("フォルダ名に使えない文字が含まれています。");
+            string normalized = parent.Length == 0 ? "" : NotePath.Parse(parent + "/placeholder").FolderPath;
+            string parentDir = Path.Combine(paths.NotesDir, normalized.Replace('/', Path.DirectorySeparatorChar));
+            if (!fs.DirectoryExists(parentDir)) throw new DirectoryNotFoundException("親フォルダが見つかりません。");
+            string relative = normalized.Length == 0 ? name : normalized + "/" + name;
+            string target = Path.Combine(parentDir, name);
+            if (fs.DirectoryExists(target) || fs.FileExists(target)) throw new IOException("同じ名前のフォルダがあります。");
+            fs.CreateDirectory(target); RefreshTree(); return relative;
+        }
+
         public async Task CloseNote(NotePath note)
         {
             if (!sessions.TryGetValue(note.Value, out var task)) return;

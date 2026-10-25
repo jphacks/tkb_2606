@@ -146,6 +146,11 @@
 .cartowords .project-bar .unity-base-field__label { min-width: 75px; font-size: 11px; }
 .cartowords .right-workspace { padding: 4px; }
 .cartowords .note-header { padding: 2px 8px; }
+.cartowords .note-title .unity-text-field__input { padding-top: 2px; padding-bottom: 2px; }
+.cartowords .note-row:hover { background-color: rgb(48, 67, 83); border-color: rgb(72, 134, 151); }
+.cartowords .note-row--selected:hover { background-color: rgb(31, 100, 122); }
+.cartowords .town-folder > .unity-foldout__toggle:hover { background-color: rgb(48, 67, 83); }
+.cartowords .town-folder .unity-foldout__content { margin-left: 10px; }
 .cartowords .format-toolbar .unity-button { padding: 2px 5px; font-size: 10px; min-height: 21px; margin-right: 3px; margin-top: 1px; margin-bottom: 3px; }
 .cartowords .sidebar { padding-top: 6px; }
 .cartowords .sidebar .unity-button { font-size: 11px; padding: 4px 5px; }

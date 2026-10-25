@@ -129,16 +129,32 @@ namespace Cartograph.EditorUI
         {
             await FlushSave(); await LoadDocument(id); currentId = id; Notify();
         }
+        public async Task OpenFolder(string folder)
+        {
+            if (project == null) throw new InvalidOperationException("保存先を開いてください。");
+            await FlushSave();
+            var first = project.AllNotes().FirstOrDefault(p => p.FolderPath == (folder ?? ""));
+            if (first.IsValid) await OpenDocument(first.Value);
+            else { currentId = null; Notify(); }
+        }
         public async Task CreateDocument()
+        { await CreateDocumentInFolder(currentId == null ? "" : NotePath.Parse(currentId).FolderPath); }
+        public async Task CreateDocumentInFolder(string folder)
         {
             if (project == null) throw new InvalidOperationException("先にプロジェクトを開いてください。");
             await FlushSave();
             var taken = new HashSet<string>(project.AllNotes().Select(p => p.Value), StringComparer.OrdinalIgnoreCase);
-            string folder = currentId == null ? "" : NotePath.Parse(currentId).FolderPath;
+            folder = folder ?? "";
+            if (folder.Length > 0) folder = NotePath.Parse(folder + "/placeholder").FolderPath;
             string prefix = folder.Length == 0 ? "" : folder + "/";
             string id = prefix + "無題のノート"; int number = 2;
             while (taken.Contains(id)) id = prefix + "無題のノート " + number++;
             Attach(await project.CreateNote(NotePath.Parse(id))); currentId = id; Notify();
+        }
+        public void CreateFolder(string parent, string name)
+        {
+            if (project == null) throw new InvalidOperationException("先に保存先を開いてください。");
+            project.CreateFolder(parent, name); Notify();
         }
         public async Task RenameDocument(string id, string title)
         {
@@ -147,11 +163,46 @@ namespace Cartograph.EditorUI
             if (!NotePath.IsValidName(title)) throw new ArgumentException("ノート名に使えない文字が含まれています。");
             var path = NotePath.Parse(id);
             if (path.Name == title) return;
+            var nextPath = path.WithName(title);
+            if (project.NoteExists(nextPath)) throw new IOException("同じ名前のノートがあります。");
+            var ids = project.AllNotes().Select(p => p.Value).ToArray();
+            foreach (var noteId in ids) await LoadDocument(noteId);
+            var linkUpdates = new Dictionary<string, List<Tuple<int, int, string>>>();
+            foreach (var noteId in ids)
+            {
+                string text = Record(Require(noteId)).markdown;
+                var changes = new List<Tuple<int, int, string>>();
+                foreach (var range in RelatedLinkRemoval.GetRanges(text, noteId, id, ids))
+                {
+                    string target = text.Substring(range.Start + 2, range.Length - 4).Trim();
+                    if (target.StartsWith("#", StringComparison.Ordinal)) continue;
+                    int suffix = target.IndexOfAny(new[] { '#', '|' });
+                    string replacement = "[[" + nextPath.Value + (suffix < 0 ? "" : target.Substring(suffix)) + "]]";
+                    changes.Add(Tuple.Create(range.Start, range.Length, replacement));
+                }
+                linkUpdates[noteId] = changes;
+            }
             await FlushSave();
             var renamed = await project.RenameNote(path, title);
             open.Remove(id);
             Attach(await project.OpenNote(renamed));
             if (currentId == id) currentId = renamed.Value;
+            foreach (var pair in linkUpdates)
+            {
+                string noteId = pair.Key == id ? renamed.Value : pair.Key;
+                foreach (var change in pair.Value)
+                {
+                    var record = Record(Require(noteId));
+                    var result = ReviewDocument(noteId, record.revision, new ChangeCandidate
+                    {
+                        NewText = record.markdown.Remove(change.Item1, change.Item2).Insert(change.Item1, change.Item3),
+                        SelStartBefore = change.Item1, SelEndBefore = change.Item1 + change.Item2,
+                        Evidence = new InputEvidence { Kind = EvidenceKind.Format }
+                    });
+                    if (!result.Approved) throw new InvalidOperationException(result.Reason);
+                }
+            }
+            await FlushSave();
             Notify();
         }
         public void UpdateTitle(string title)

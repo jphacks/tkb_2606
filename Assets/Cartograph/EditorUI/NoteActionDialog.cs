@@ -5,11 +5,67 @@ using UnityEngine.UIElements;
 
 namespace Cartograph.EditorUI
 {
+    public sealed class NotebookLibraryDialog : VisualElement
+    {
+        private readonly ScrollView list;
+        private readonly TextField nameField;
+        private readonly Label error;
+        private readonly VisualElement window;
+        private Func<string, Task> create;
+        private bool busy;
+        public NotebookLibraryDialog(Action browse)
+        {
+            style.position = Position.Absolute; style.left = style.right = style.top = style.bottom = 0;
+            style.backgroundColor = new Color(0, 0, 0, .65f); style.alignItems = Align.Center;
+            style.justifyContent = Justify.Center; style.display = DisplayStyle.None;
+            window = new VisualElement(); window.style.width = 520; window.style.maxWidth = Length.Percent(95);
+            window.style.maxHeight = Length.Percent(90); window.style.paddingLeft = window.style.paddingRight = 20;
+            window.style.paddingTop = window.style.paddingBottom = 20; window.style.backgroundColor = new Color(.11f, .14f, .2f);
+            window.style.borderTopLeftRadius = window.style.borderTopRightRadius = 10;
+            window.style.borderBottomLeftRadius = window.style.borderBottomRightRadius = 10; Add(window);
+            var heading = new Label("ノート用フォルダ"); heading.style.fontSize = 22; window.Add(heading);
+            window.Add(new Label("フォルダを選ぶか、新しく作成して書き始められます。"));
+            list = new ScrollView(); list.style.maxHeight = 280; list.style.minHeight = 70; window.Add(list);
+            nameField = new TextField("新しいフォルダ名"); window.Add(nameField);
+            window.Add(new Button(() => Run(() => create(nameField.value))) { text = "＋ 作成して開く" });
+            error = new Label(); error.style.whiteSpace = WhiteSpace.Normal; error.style.color = new Color(1, .6f, .5f); window.Add(error);
+            window.Add(new Button(() => { if (!busy) { style.display = DisplayStyle.None; browse(); } }) { text = "既存の保存先を追加…" });
+            window.Add(new Button(() => { if (!busy) style.display = DisplayStyle.None; }) { text = "閉じる" });
+            RegisterCallback<KeyDownEvent>(evt =>
+            { if (evt.keyCode == KeyCode.Escape && !busy) { style.display = DisplayStyle.None; evt.StopImmediatePropagation(); } });
+        }
+        public void Show(System.Collections.Generic.IEnumerable<System.Collections.Generic.KeyValuePair<string, string>> folders,
+            Func<string, Task> open, Func<string, Task> create)
+        {
+            if (busy) return;
+            this.create = create; list.Clear(); error.text = ""; nameField.SetValueWithoutNotify("");
+            int count = 0;
+            foreach (var folder in folders)
+            {
+                string path = folder.Key;
+                var button = new Button(() => Run(() => open(path))) { text = folder.Value, tooltip = path };
+                button.style.unityTextAlign = TextAnchor.MiddleLeft; button.style.whiteSpace = WhiteSpace.NoWrap;
+                button.style.overflow = Overflow.Hidden; button.style.textOverflow = TextOverflow.Ellipsis;
+                list.Add(button); count++;
+            }
+            if (count == 0) list.Add(new Label("ノート用フォルダはまだありません。"));
+            style.display = DisplayStyle.Flex; BringToFront();
+        }
+        private async void Run(Func<Task> action)
+        {
+            if (busy) return;
+            busy = true; window.SetEnabled(false);
+            try { await action(); style.display = DisplayStyle.None; }
+            catch (Exception ex) { error.text = ex.Message; }
+            finally { busy = false; window.SetEnabled(true); }
+        }
+    }
     /// <summary>A runtime modal window; callers keep ownership of note storage and validation.</summary>
     public sealed class NoteActionDialog : VisualElement
     {
         private readonly Label heading, description, error;
         private readonly TextField title;
+        private readonly DropdownField parentFolder;
         private readonly Button submitButton, cancelButton;
         private Func<Task> submit;
         private VisualElement previousFocus;
@@ -44,6 +100,8 @@ namespace Cartograph.EditorUI
             description.style.color = new Color(.78f, .82f, .88f); window.Add(description);
             title = new TextField { name = "rename-note-title" };
             title.style.marginBottom = 10; window.Add(title);
+            parentFolder = new DropdownField("作成先");
+            parentFolder.style.display = DisplayStyle.None; window.Add(parentFolder);
             error = new Label { enableRichText = false };
             error.style.whiteSpace = WhiteSpace.Normal;
             error.style.color = new Color(1, .55f, .5f);
@@ -82,6 +140,7 @@ namespace Cartograph.EditorUI
         {
             if (onSubmit == null) throw new ArgumentNullException(nameof(onSubmit));
             if (busy) return;
+            parentFolder.style.display = DisplayStyle.None;
             heading.text = "ノートの名前を変更";
             description.text = "新しい名前を入力してください。";
             title.style.display = DisplayStyle.Flex;
@@ -100,6 +159,7 @@ namespace Cartograph.EditorUI
         {
             if (onSubmit == null) throw new ArgumentNullException(nameof(onSubmit));
             if (busy) return;
+            parentFolder.style.display = DisplayStyle.None;
             heading.text = "ノートを削除しますか？";
             description.text = "「" + (noteTitle ?? "") + "」を削除します。";
             title.style.display = DisplayStyle.None;
@@ -111,12 +171,26 @@ namespace Cartograph.EditorUI
         public void ShowCloseConfirmation(Func<Task> onSubmit)
         {
             if (busy) return;
+            parentFolder.style.display = DisplayStyle.None;
             heading.text = "未保存の内容があります";
             description.text = "まだ保存が完了していない内容があります。保存してから閉じますか？\n保存に失敗した場合は、閉じずに内容を保持します。";
             title.style.display = DisplayStyle.None;
             submitButton.text = "保存して閉じる";
             submit = onSubmit;
             Show(cancelButton);
+        }
+        public void ShowCreateFolder(System.Collections.Generic.IEnumerable<string> folders, string initialParent, Func<string, string, Task> create)
+        {
+            if (busy) return;
+            var paths = new System.Collections.Generic.List<string> { "" }; paths.AddRange(folders);
+            parentFolder.choices = paths.ConvertAll(p => p.Length == 0 ? "一番上のフォルダ" : p);
+            parentFolder.index = Math.Max(0, paths.IndexOf(initialParent ?? ""));
+            parentFolder.style.display = DisplayStyle.Flex;
+            heading.text = "フォルダを作成"; description.text = "名前と作成先を選んでください。";
+            title.style.display = DisplayStyle.Flex; title.SetValueWithoutNotify("");
+            submitButton.text = "作成する";
+            submit = () => create(paths[parentFolder.index], title.value);
+            Show(title);
         }
 
         private void Show(VisualElement focus)
