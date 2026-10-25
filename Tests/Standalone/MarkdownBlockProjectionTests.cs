@@ -4,6 +4,16 @@ using Cartograph.EditorUI;
 public sealed class MarkdownBlockProjectionTests
 {
     [Test]
+    public void SoftBreakMarkerIsHiddenAndSurvivesVisibleEditing()
+    {
+        var blocks = MarkdownBlockProjection.Parse("本文  \n続き\n次の段落");
+        Assert.That(blocks[0].HasSoftBreakAfter, Is.True);
+        Assert.That(blocks[0].DisplayText, Is.EqualTo("本文"));
+        Assert.That(blocks[0].ReplaceVisible("本文あ"), Is.EqualTo("本文あ  "));
+        Assert.That(blocks[1].HasSoftBreakAfter, Is.False);
+        Assert.That(blocks[1].SourceStart, Is.EqualTo(5));
+    }
+    [Test]
     public void HeadingAndListPrefixesAreHiddenWithSourceOffsetsPreserved()
     {
         var blocks = MarkdownBlockProjection.Parse("## 見出し\r\n- 本文\n");
