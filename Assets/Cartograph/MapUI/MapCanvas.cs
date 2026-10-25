@@ -284,6 +284,8 @@ namespace Cartograph.MapUI
         }
         // 解析のたびに一度だけ求めておく、毎フレームの描画で使う値(文字列のハッシュや並べ替えを、毎フレームしないため)。
         private struct FlowerDraw { public MapFlower Flower; public int Hash; public float X, Bottom; }
+        // 旗の絵(64x64)は、左端に近い旗竿(中心が左から約 5px)が足元。竿の根元を拠点のマスの中心に置くため、絵を右へずらす。
+        private const float FlagPoleShift = 27f;
         private struct FlagDraw { public float X, Bottom; public Sprite[] Frames; public MapPoint At; }
         private struct TownLabel { public string Name; public MapPoint Anchor; }
         private readonly List<FlowerDraw> flowerDraws = new List<FlowerDraw>();
@@ -305,7 +307,7 @@ namespace Cartograph.MapUI
             foreach (var node in value.Nodes.OrderBy(n => positions[n.Id].Y))
             {
                 var at = positions[node.Id];
-                flagDraws.Add(new FlagDraw { X = at.X, Bottom = at.Y + MapLayout.Tile / 2, Frames = art.FlagFor(MapLayout.StableHash(node.Town)), At = at });
+                flagDraws.Add(new FlagDraw { X = at.X + FlagPoleShift, Bottom = at.Y + MapLayout.Tile / 2, Frames = art.FlagFor(MapLayout.StableHash(node.Town)), At = at });
             }
             foreach (var town in value.Nodes.GroupBy(n => n.Town).Take(16))
             {
