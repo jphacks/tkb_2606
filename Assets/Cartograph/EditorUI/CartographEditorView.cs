@@ -81,8 +81,26 @@ namespace Cartograph.EditorUI
             if (root != null) Refresh();
         }
 
+        private bool quitAfterSave;
+        private bool WantsToQuit()
+        {
+            if (quitAfterSave || workspace == null || root == null) return true;
+            Application.runInBackground = true; // Keep save continuations running after losing OS focus.
+            if (!busy) Run(async () =>
+            {
+                FlushMapLayout();
+                await workspace.FlushSave();
+                quitAfterSave = true;
+
+            });
+            return false;
+        }
+
         private void Start()
         {
+#if !UNITY_EDITOR
+            Application.wantsToQuit += WantsToQuit;
+#endif
             uiContext = System.Threading.SynchronizationContext.Current;
             uiThread = System.Threading.Thread.CurrentThread.ManagedThreadId;
             var document = GetComponent<UIDocument>();
@@ -120,7 +138,7 @@ namespace Cartograph.EditorUI
             var header = Row(root);
             header.style.paddingLeft = 24;
             header.style.paddingRight = 24;
-            header.style.height = 30; header.style.flexShrink = 0;
+            header.style.height = 50; header.style.paddingTop = 8; header.style.paddingBottom = 8; header.style.flexShrink = 0;
             header.style.alignItems = Align.Center;
             var brand = new Label("CARTOWORDS"); brand.AddToClassList("brand");
             header.Add(brand);
@@ -365,6 +383,7 @@ namespace Cartograph.EditorUI
 #endif
         private void LateUpdate()
         {
+            if (quitAfterSave) { Application.Quit(); return; }
 #if ENABLE_INPUT_SYSTEM
             TrackKeyboard();
 #endif
@@ -1065,14 +1084,8 @@ namespace Cartograph.EditorUI
         }
 
         // ---- 画面サイズへの追従 -----------------------------------------------------------
-        // UI の拡大率は、画面(ゲームビュー)の大きさに合わせて決める。基準は 1600x900 で 1.0。
-        // 小さい画面で大きすぎず、大きい画面で小さすぎないよう、幅・高さの小さいほうの比で、範囲を区切る。
-        private const float ReferenceWidth = 1600f, ReferenceHeight = 900f, MinUiScale = 0.75f, MaxUiScale = 2f;
-        internal static float UiScaleFor(float width, float height)
-        {
-            if (width <= 0 || height <= 0) return 1f;
-            return Mathf.Clamp(Mathf.Min(width / ReferenceWidth, height / ReferenceHeight), MinUiScale, MaxUiScale);
-        }
+        // Scale the panel as a whole so text, selections and pointer coordinates stay aligned.
+        internal static float UiScaleFor(float width, float height) => DesktopUiScale.ForSize(width, height);
         private int appliedScreenWidth, appliedScreenHeight;
         private void ApplyUiScale()
         {
@@ -1120,6 +1133,7 @@ namespace Cartograph.EditorUI
 
         private void OnDestroy()
         {
+            Application.wantsToQuit -= WantsToQuit;
             mapRequestJob?.Pause(); FlushMapLayout();
 #if ENABLE_INPUT_SYSTEM
             if (imeKeyboard != null) { imeKeyboard.onIMECompositionChange -= OnComposition; imeKeyboard.onTextInput -= OnTextInput; }

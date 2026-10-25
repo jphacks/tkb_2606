@@ -96,7 +96,7 @@ namespace Cartograph.EditorUI
                     pixels[y * Size + x] = new Color32(0, 0, 0, 255); break;
                 }
             }
-            texture.SetPixels32(pixels); texture.Apply(false, true);
+            texture.SetPixels32(pixels); texture.Apply(false, false); // Cursor.SetCursor requires CPU-readable pixels.
             return texture;
         }
     }

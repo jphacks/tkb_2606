@@ -28,7 +28,7 @@ namespace Cartograph.EditorUI
         private VisualElement dropElement;
 
         public string CurrentFolder { get; private set; } = "";
-        public NoteTreeSort Sort => sort;
+        public new NoteTreeSort Sort => sort;
 
         public event Action<string> NoteSelected;
         public event Action<string> DeleteRequested;

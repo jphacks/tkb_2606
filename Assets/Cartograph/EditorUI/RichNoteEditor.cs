@@ -533,6 +533,7 @@ namespace Cartograph.EditorUI
         public void Tick()
         {
             if (!Enabled || composing()) return;
+            string before = raw; int beforeCursor = cursor, beforeSelection = selection;
             Reconcile();
             CaptureSelection();
             processing = true;
@@ -540,13 +541,16 @@ namespace Cartograph.EditorUI
             {
                 foreach (var row in rows)
                 {
+                    var focused = panel?.focusController.focusedElement as VisualElement;
+                    if (!row.Binding.HasPending && (focused == null || !(ReferenceEquals(focused, row.Field) || row.Field.Contains(focused)))) continue;
                     row.Binding.Tick();
                     if ((Find().markdown ?? "") != raw) break;
                 }
             }
             finally { processing = false; }
             Reconcile();
-            Changed?.Invoke(raw, cursor, selection);
+            if (before != raw || beforeCursor != cursor || beforeSelection != selection)
+                Changed?.Invoke(raw, cursor, selection);
         }
         private void Reconcile()
         {
@@ -596,7 +600,11 @@ namespace Cartograph.EditorUI
             catch (Exception ex) { notice(ex.Message); return false; }
             finally { processing = false; }
         }
-        private DocumentRecord Find() => source.Documents.First(record => record.id == id);
+        private DocumentRecord Find()
+        {
+            var current = source.Current;
+            return current != null && current.id == id ? current : source.Documents.First(record => record.id == id);
+        }
         private void InsertNewline(int index, TextField field, KeyDownEvent evt)
         {
             if (!Enabled || composing() || evt.ctrlKey || evt.commandKey || evt.altKey) return;
