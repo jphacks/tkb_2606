@@ -10,6 +10,20 @@ namespace Cartograph.EditorUI
 {
     public static class MapAnalysisAdapter
     {
+        public static IReadOnlyList<string> ConnectedNotes(MapSnapshot snapshot, string currentId)
+        {
+            var connected = new HashSet<string>(StringComparer.Ordinal);
+            if (snapshot == null || currentId == null) return Array.Empty<string>();
+            var files = snapshot.Nodes.ToDictionary(node => node.Id, node => node.File);
+            foreach (var road in snapshot.Roads)
+            {
+                if (road.Auto) continue;
+                string from = files[road.From], to = files[road.To];
+                if (from == currentId && to != currentId) connected.Add(to);
+                if (to == currentId && from != currentId) connected.Add(from);
+            }
+            return connected.OrderBy(id => id, StringComparer.Ordinal).ToArray();
+        }
         public static async Task<MapSnapshot> Analyze(ProjectEditorWorkspace workspace, MapRequest request, Func<bool> current)
         {
             var tree = workspace.Tree;

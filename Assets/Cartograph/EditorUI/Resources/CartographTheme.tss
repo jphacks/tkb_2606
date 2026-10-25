@@ -1,5 +1,7 @@
 @import url("unity-theme://default");
 
+.cartowords:disabled { opacity: 1; }
+
 .cartowords .unity-text-element { color: rgb(229, 233, 242); }
 .cartowords .muted { color: rgb(155, 165, 185); }
 .cartowords .brand { color: rgb(76, 190, 208); -unity-font-style: bold; font-size: 19px; }
@@ -71,7 +73,7 @@
     padding: 12px 14px;
     color: rgb(235, 239, 246);
     --unity-cursor-color: rgb(88, 208, 217);
-    --unity-selection-color: rgba(37, 144, 197, 0.9);
+    --unity-selection-color: rgba(199, 239, 244, 0.42);
 }
 .cartowords .unity-text-field__input:focus { border-color: rgb(64, 158, 180); }
 .cartowords .note-title .unity-text-field__input {
@@ -159,3 +161,9 @@
 .cartowords .rich-note-block { margin-left: 0; margin-right: 0; flex-shrink: 0; }
 .cartowords .rich-note-block .unity-text-field__input { background-color: rgba(0, 0, 0, 0); border-width: 0; padding: 3px 5px; }
 .cartowords .rich-note-block .unity-text-field__input:focus { border-width: 0; }
+/* RichNoteEditor draws one blinking caret; suppress the native caret after
+   theme resolution as well as at runtime. */
+.cartowords .rich-note-editor .rich-note-block .unity-text-field__input,
+.cartowords .rich-note-editor .rich-note-block .unity-text-field__input:focus {
+    --unity-cursor-color: rgba(0, 0, 0, 0);
+}
