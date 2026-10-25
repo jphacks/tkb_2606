@@ -51,6 +51,21 @@ namespace Cartowords.MapPresentation
         }
     }
 
+    // 建物が建つ演出。前の解析になかった建物だけを「新しい」とし、最初の地図と、前の地図と無関係な地図には演出を付けない。
+    public static class BuildingAppearance
+    {
+        public const int Frames = 4;
+        public static List<string> NewKeys(ICollection<string> previous, IEnumerable<string> current, bool incremental)
+        {
+            var result = new List<string>();
+            if (!incremental || previous == null) return result;
+            foreach (var key in current) if (!previous.Contains(key)) result.Add(key);
+            return result;
+        }
+        // 建ち始めてからの経過コマ数 → 大きさの割合(0 は、まだ見えない)。始まる前(負)は見えず、最後は 1。
+        public static float Grow(int age) => age < 0 ? 0 : age >= Frames ? 1 : (age + 1) / (float)(Frames + 1);
+    }
+
     public enum BuildingShape { Hut, House, Lodge3x2, Lodge3x3, Tower }
 
     // 建物の大きさ。Width と Depth は地面で占めるマス数。ビルの Depth は 1 で、Floors(中階の数)だけ上へ伸びる。

@@ -24,7 +24,7 @@ MapRoad は From/To に描画ノードIDを指定。MapFog/MapMark/MapFlower も
 未ロードのノートは既存workspaceのrevisionが0の場合があります。requestのバージョン集合を独自の番号で置き換えないでください。解析のためにロードしてバージョンが変わった場合は、新しいリクエストの結果を公開してください。
 購読は初期画面更新前に行ってください。未接続時の通常画面は「解析データ待ち」です。「表示サンプル」は明示した架空データで、実ノートは開きません。
 
-FlowerColorChanged(Emotion, Color32) を設定保存へ接続し、復元時は SetFlowerColor を呼んでください。設定保存自体は今回追加していません。
+(この記述は古くなりました。花の色変更の UI と SetFlowerColor は、花が感情ごとの色付きドット絵になったため、M5 で削除しました。)
 
 ## 検証
 - Unity 6000.3.24f1付属Roslynと参照DLLでEditor・Player両構成のC#コンパイル成功。

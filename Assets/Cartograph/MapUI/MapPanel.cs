@@ -76,7 +76,6 @@ namespace Cartograph.MapUI
             if (open && isPreview) Present(latest);
             if (!open && !isPreview) info.text = "保存先フォルダを開くと、ノートのマップを表示します。";
         }
-        public void SetFlowerColor(Emotion emotion, UnityEngine.Color32 color) => canvas.SetFlowerColor(emotion, color);
         private static MapSnapshot Sample()
         {
             var nodes = new List<MapNode>(); var roads = new List<MapRoad>(); var flowers = new List<MapFlower>();

@@ -90,6 +90,16 @@ namespace Cartowords.MapPresentation
         {
             unchecked { uint hash = 2166136261; foreach (char c in text) hash = (hash ^ c) * 16777619; return (int)(hash & 0x7fffffff); }
         }
+        // マスごとの絵を選ぶための、文字列を作らないハッシュ(毎フレーム、描くマスの数だけ呼ばれる)。
+        public static int CellHash(int x, int y)
+        {
+            unchecked
+            {
+                uint h = (uint)x * 73856093u ^ (uint)y * 19349663u;
+                h ^= h >> 13; h *= 0x5bd1e995u; h ^= h >> 15;
+                return (int)(h & 0x7fffffff);
+            }
+        }
         public static Dictionary<string, MapPoint> Solve(MapSnapshot snapshot, IReadOnlyDictionary<string, MapPoint> previous = null)
         {
             var nodes = snapshot.Nodes.OrderBy(n => n.Id, StringComparer.Ordinal).ToArray();
@@ -111,15 +121,21 @@ namespace Cartowords.MapPresentation
                 if (previous != null && previous.TryGetValue(nodes[i].Id, out var point))
                 { x[i] = point.X; y[i] = point.Y; pinned[i] = true; }
             }
+            // 動くのは位置が決まっていない拠点だけ。全員決まっていれば反復は要らず、決まっている者どうしの力は結果に効かないので省く。
+            var freeList = Enumerable.Range(0, count).Where(n => !pinned[n]).ToArray(); int free = freeList.Length;
             // Bounded layout work: never runs each frame. Rendering uses its cached result.
-            for (int step = 0; step < 28; step++)
+            for (int step = 0; step < (free == 0 ? 0 : 28); step++)
             {
                 var dx = new float[count]; var dy = new float[count];
                 for (int i = 0; i < count; i++)
                 {
                     dx[i] += (ax[i] - x[i]) * 0.018f; dy[i] += (ay[i] - y[i]) * 0.018f;
-                    for (int j = i + 1; j < count; j++)
+                    // 位置が決まっている拠点は、動く拠点との組だけを調べる(組の数を n² から n×動く数に減らす)。
+                    int from = i + 1, to = count, listAt = 0;
+                    if (pinned[i]) { while (listAt < freeList.Length && freeList[listAt] <= i) listAt++; to = freeList.Length - listAt; from = 0; }
+                    for (int pair = from; pair < to; pair++)
                     {
+                        int j = pinned[i] ? freeList[listAt + pair] : pair;
                         float vx = x[i] - x[j], vy = y[i] - y[j];
                         float squared = vx * vx + vy * vy + 64;
                         if (squared > 300000) continue;

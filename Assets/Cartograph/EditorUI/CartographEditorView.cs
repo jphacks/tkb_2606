@@ -689,7 +689,6 @@ namespace Cartograph.EditorUI
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (Current()) mapPanel.ShowError("マップを更新できません：" + ex.Message); }
         }
-        public void SetFlowerColor(Emotion emotion, Color32 color) => mapPanel?.SetFlowerColor(emotion, color);
 
         private void ShowReviewNotice(string text)
         {
