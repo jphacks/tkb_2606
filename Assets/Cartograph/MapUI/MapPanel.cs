@@ -118,26 +118,6 @@ namespace Cartograph.MapUI
             if (open && isPreview) Present(latest);
             if (!open && !isPreview) info.text = "保存先フォルダを開くと、ノートのマップを表示します。";
         }
-        private static MapSnapshot Sample()
-        {
-            var nodes = new List<MapNode>(); var roads = new List<MapRoad>(); var flowers = new List<MapFlower>();
-            string[] titles = { "今日の学び", "光合成", "光とエネルギー", "観察メモ", "問い", "波の性質", "振動", "音", "気づき", "次の一歩", "日記", "考えごと" };
-            for (int i = 0; i < titles.Length; i++)
-            {
-                nodes.Add(new MapNode("sample-" + i, i < 6 ? "大学/生物" : "個人/日記", titles[i], i + 1, i == 10 ? 0 : 140 + i * 65, i == 11));
-                if (i > 0 && i < 11) roads.Add(new MapRoad("sample-" + (i - 1), "sample-" + i, (RoadKind)(i % 4), i % 3 == 0));
-                if (i % 2 == 0) flowers.Add(new MapFlower("sample-" + i, i + 1, (Emotion)(i / 2 % 4), i == 8));
-            }
-            return new MapSnapshot(new MapRequest("preview", 1, new Dictionary<string, long>()), nodes, roads,
-                new[] { new MapFog("sample-4", 5) }, new[] {
-                    new MapMark("sample-4", MarkKind.BrokenLink, "この道の先は、まだ地図にありません"),
-                    new MapMark("sample-11", MarkKind.Isolated, "ここは、まだどこともつながっていません"),
-                    new MapMark("sample-6", MarkKind.MissingReason, "この道の理由は、まだ書かれていません") }, flowers,
-                buildings: new[] {
-                    new MapBuilding("sample-0", "人物/田中", "田中", 1, 0, 0), new MapBuilding("sample-1", "人物/田中", "田中", 0, 1, 2),
-                    new MapBuilding("sample-2", "人物/鈴木", "鈴木", 1, 2, 3), new MapBuilding("sample-3", "人物/鈴木", "鈴木", 2, 3, 5),
-                    new MapBuilding("sample-5", "場所/図書館", "図書館", 4, 4, 9), new MapBuilding("sample-7", "場所/図書館", "図書館", 0, 0, 1),
-                    new MapBuilding("sample-8", "用語/光合成", "光合成", 5, 5, 12) });
-        }
+        private static MapSnapshot Sample() => MapSample.Build();
     }
 }

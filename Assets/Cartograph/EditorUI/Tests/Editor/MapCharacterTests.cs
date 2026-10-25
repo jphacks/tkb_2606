@@ -159,27 +159,30 @@ namespace Cartograph.EditorUI.Tests
         }
 
         [Test]
-        public void FlagOnlyLandFallsBackToNearbyFreeCells()
+        public void FlagOnlyLandWalksOnLandAndRoadCellsOnly()
         {
             var land = Block(5, 5, 1, 1);
             var occupancy = new MapOccupancy();
             occupancy.ReserveAround(MapCell.Key(5, 5), 1, OccupyKind.Flag);
-            Assert.That(Make("flag.md", land, occupancy), Is.Null);
-            var nearby = new HashSet<long>();
-            MapNpc.AddNearby(nearby, MapCell.Key(5, 5), MapNpc.NearbyRange);
-            var npc = MapNpc.BuildOne("flag.md", land, occupancy, null, nearby);
+            Assert.That(Make("flag.md", land, occupancy), Is.Not.Null);   // 空きがなくても旗のマスに立つ
+            // 旗のマスだけでは動けない。道が右へ 2 マス+離れた 1 マス(届かない)あるとき。
+            var roads = new HashSet<long> { MapCell.Key(6, 5), MapCell.Key(7, 5), MapCell.Key(9, 5) };
+            occupancy.ReserveAll(roads, OccupyKind.Path);
+            var npc = MapNpc.BuildOne("flag.md", land, occupancy, null, roads);
             Assert.That(npc, Is.Not.Null);
-            foreach (long w in npc.Waypoints)
-            {
-                Assert.That(occupancy.IsFree(MapCell.X(w), MapCell.Y(w)), Is.True);
-                Assert.That(nearby.Contains(w), Is.True);
-            }
-            for (double t = 0; t < 100; t += 0.1)
+            var allowed = new HashSet<long>(land); allowed.Add(MapCell.Key(6, 5)); allowed.Add(MapCell.Key(7, 5));
+            foreach (long w in npc.Waypoints) Assert.That(allowed.Contains(w), Is.True);
+            for (double t = 0; t < 200; t += 0.1)
             {
                 var p = npc.At(t);
-                Assert.That(System.Math.Abs(p.X - 5), Is.LessThanOrEqualTo(2.001f));
-                Assert.That(System.Math.Abs(p.Y - 5), Is.LessThanOrEqualTo(2.001f));
+                Assert.That(p.Y, Is.EqualTo(5f).Within(0.001f));
+                Assert.That(p.X, Is.InRange(5f, 7f));
             }
+            // 道がなければ旗のマスに立ち止まる。壁には出ない。
+            var still = MapNpc.BuildOne("flag.md", land, occupancy, null, null);
+            Assert.That(still, Is.Not.Null);
+            Assert.That(still.Wanders, Is.False);
+            Assert.That(still.Waypoints.Single(), Is.EqualTo(MapCell.Key(5, 5)));
         }
 
         [Test]
@@ -189,14 +192,17 @@ namespace Cartograph.EditorUI.Tests
             var occupancy = new MapOccupancy();
             occupancy.ReserveAround(MapCell.Key(5, 5), 1, OccupyKind.Flag);
             occupancy.ReserveAround(MapCell.Key(7, 5), 1, OccupyKind.Flag);
-            var near = new Dictionary<string, HashSet<long>> { ["a.md"] = new HashSet<long>(), ["b.md"] = new HashSet<long>() };
-            MapNpc.AddNearby(near["a.md"], MapCell.Key(5, 5), MapNpc.NearbyRange);
-            MapNpc.AddNearby(near["b.md"], MapCell.Key(7, 5), MapNpc.NearbyRange);
-            var npcs = MapNpc.Build(land, occupancy, null, near);
+            var roads = new List<long> { MapCell.Key(6, 5), MapCell.Key(6, 6), MapCell.Key(6, 7) };
+            occupancy.ReserveAll(roads, OccupyKind.Path);
+            var npcs = MapNpc.Build(land, occupancy, null, roads);
             Assert.That(npcs.Count, Is.EqualTo(2));
-            var again = MapNpc.Build(land, occupancy, null, near);
+            var again = MapNpc.Build(land, occupancy, null, roads);
             Assert.That(again.Select(n => n.File + Describe(n, 4.2)), Is.EqualTo(npcs.Select(n => n.File + Describe(n, 4.2))));
-            foreach (long w in npcs.First(n => n.File == "a.md").Waypoints) Assert.That(land["b.md"].Contains(w), Is.False);
+            foreach (var npc in npcs)
+            {
+                var own = land[npc.File]; var other = land[npc.File == "a.md" ? "b.md" : "a.md"];
+                foreach (long w in npc.Waypoints) { Assert.That(other.Contains(w), Is.False); Assert.That(own.Contains(w) || roads.Contains(w), Is.True); }
+            }
         }
 
         [Test]

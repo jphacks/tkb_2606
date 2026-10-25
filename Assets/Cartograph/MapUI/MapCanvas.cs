@@ -26,6 +26,8 @@ namespace Cartograph.MapUI
         private Dictionary<string, MapPoint> positions = new Dictionary<string, MapPoint>();
         private readonly HashSet<long> land = new HashSet<long>();
         private int frame;
+        private const int FogFrameDivisor = 3;   // 霧の絵を進める速さ(フレーム数の何分の一か)。
+        private readonly HashSet<long> npcRoadOnly = new HashSet<long>();   // 土地でない道のマス(人物を道の筋に寄せる用)。
         // 道は 16px のサブマスの上にあり、壁(暗い所)だけを通る(土地のマスとは重ならない)。
         // roads.Mask は各サブマスの描くマスク(上=1 右=2 下=4 左=8)、roadCells は道が触れる 32px マス(建物・自然物の占有用)。
         // pathKind は種別の重ね絵を載せるサブマス(向きは 0上 1右 2下 3左)。
@@ -99,7 +101,7 @@ namespace Cartograph.MapUI
             hoverLabel.style.position = Position.Absolute; hoverLabel.style.fontSize = 11; hoverLabel.style.display = DisplayStyle.None;
             hoverLabel.style.backgroundColor = (Color)new Color32(12, 22, 36, 230);
             hoverLabel.style.color = (Color)new Color32(236, 226, 190, 255);
-            hoverLabel.style.paddingLeft = hoverLabel.style.paddingRight = 4;
+            hoverLabel.style.paddingLeft = hoverLabel.style.paddingRight = 4; hoverLabel.style.maxWidth = HoverMaxWidth; hoverLabel.style.whiteSpace = WhiteSpace.Normal;
             Add(hoverLabel);
             name = "knowledge-map"; style.flexGrow = 1; style.minHeight = 200;
             style.overflow = Overflow.Hidden; style.position = Position.Relative;
@@ -286,7 +288,7 @@ namespace Cartograph.MapUI
         private struct FlowerDraw { public MapFlower Flower; public int Hash; public float X, Bottom; }
         // 旗の絵(64x64)は、左端に近い旗竿(中心が左から約 5px)が足元。竿の根元を拠点のマスの中心に置くため、絵を右へずらす。
         private const float FlagPoleShift = 27f;
-        private struct FlagDraw { public float X, Bottom; public Sprite[] Frames; public MapPoint At; }
+        private struct FlagDraw { public float X, Bottom; public Sprite[] Frames; public MapPoint At; public MapNode Node; }
         private struct TownLabel { public string Name; public MapPoint Anchor; }
         private readonly List<FlowerDraw> flowerDraws = new List<FlowerDraw>();
         private readonly List<FlagDraw> flagDraws = new List<FlagDraw>();
@@ -307,7 +309,7 @@ namespace Cartograph.MapUI
             foreach (var node in value.Nodes.OrderBy(n => positions[n.Id].Y))
             {
                 var at = positions[node.Id];
-                flagDraws.Add(new FlagDraw { X = at.X + FlagPoleShift, Bottom = at.Y + MapLayout.Tile / 2, Frames = art.FlagFor(MapLayout.StableHash(node.Town)), At = at });
+                flagDraws.Add(new FlagDraw { X = at.X + FlagPoleShift, Bottom = at.Y, Frames = art.FlagFor(MapLayout.StableHash(node.Town)), At = at, Node = node });
             }
             foreach (var town in value.Nodes.GroupBy(n => n.Town).Take(16))
             {
@@ -349,14 +351,10 @@ namespace Cartograph.MapUI
             }
             var natureCells = new HashSet<long>();
             foreach (var item in natureItems) natureCells.Add(MapCell.Key(item.X, item.Y));
-            // 土地に空きマスがないノート(旗だけの土地)は、拠点のまわり 2 マス以内の空きマスに立つ。
-            var nearByFile = new Dictionary<string, HashSet<long>>(StringComparer.Ordinal);
-            foreach (var node in value.Nodes)
-            {
-                if (!nearByFile.TryGetValue(node.File, out var near)) nearByFile[node.File] = near = new HashSet<long>();
-                MapNpc.AddNearby(near, cells[node.Id], MapNpc.NearbyRange);
-            }
-            npcs = MapNpc.Build(landByFile, occupancy, natureCells, nearByFile);
+            // 土地に空きマスがないノート(旗だけの土地)は、土地と、そこからつながる近くの道のマスだけを歩く(壁は歩かない)。
+            npcs = MapNpc.Build(landByFile, occupancy, natureCells, roadCells);
+            npcRoadOnly.Clear();
+            foreach (long key in roadCells) if (!land.Contains(key)) npcRoadOnly.Add(key);
         }
         private static bool HasArt(BuildingSize size, MapBuilding building, MapArt art)
             => size.Shape == BuildingShape.Tower ? art.TowerFor(size.Width, MapLayout.StableHash(building.File)) != null : art.Fixed(size.Shape) != null;
@@ -383,18 +381,69 @@ namespace Cartograph.MapUI
         }
         private void UpdateHover(Vector2 at)
         {
-            int index = BuildingAt(at);
-            if (index < 0)
+            string text = HoverTextAt(at);
+            if (string.IsNullOrEmpty(text)) { HideHover(); return; }
+            hoverLabel.text = text;
+            MapHover.EstimateSize(text, HoverMaxWidth, out float w, out float h);
+            MapHover.PlaceLabel(at.x, at.y, w, h, contentRect.width, contentRect.height, out float left, out float top);
+            hoverLabel.style.left = left; hoverLabel.style.top = top; hoverLabel.style.display = DisplayStyle.Flex;
+        }
+        private const float HoverMaxWidth = 260f;
+        private readonly List<HoverTarget> hoverTargets = new List<HoverTarget>();
+        // ポインタ(画面座標)の下にある記号の説明。優先順位は MapHover.Pick が決める(目印 > 建物 > 花 > 旗 > 霧 > 候補)。なければ道の種別。
+        private string HoverTextAt(Vector2 at)
+        {
+            if (snapshot == null) return null;
+            var art = MapArt.Instance; float s = viewport.Scale, tile = MapLayout.Tile;
+            var world = viewport.World(new MapPoint(at.x, at.y));
+            var targets = hoverTargets; targets.Clear();
+            float markHalf = Mathf.Max(12f, 10f / s);
+            foreach (var mark in snapshot.Marks)
             {
-                var candidate = CandidateAt(at);
-                if (candidate == null) { HideHover(); return; }
-                hoverLabel.text = "関連の候補: " + candidate.Reason;
-                hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
-                return;
+                if (!positions.TryGetValue(mark.Node, out var p)) continue;
+                targets.Add(HoverTarget.Around(HoverTier.Mark, MapHover.MarkText(mark.Kind), p.X + MarkOffset.x, p.Y + MarkOffset.y, markHalf));
             }
-            var building = placements[index].Building;
-            hoverLabel.text = building.Name + "  ×" + building.Count;
-            hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
+            foreach (var building in placements)
+            {
+                var r = BuildingWorldRect(building);
+                targets.Add(HoverTarget.Rect(HoverTier.Building, MapHover.BuildingText(building.Building.Name, building.Building.Count), r.xMin, r.yMin, r.xMax, r.yMax));
+            }
+            foreach (var item in flowerDraws)
+            {
+                var frames = art.Flowers[(int)item.Flower.Emotion];
+                var sprite = item.Flower.Withered ? art.Withered[(int)item.Flower.Emotion] : frames.Length == 0 ? null : frames[0];
+                float fw = sprite != null ? sprite.rect.width : tile, fh = sprite != null ? sprite.rect.height : tile;
+                targets.Add(HoverTarget.Rect(HoverTier.Flower, MapHover.FlowerText(item.Flower.Emotion, item.Flower.Withered, item.Flower.Line),
+                    item.X - fw / 2, item.Bottom - fh, item.X + fw / 2, item.Bottom));
+            }
+            for (int i = 0; i < flagDraws.Count; i++)
+            {
+                var flag = flagDraws[i];
+                if (flag.Node == null) continue;
+                float fw = flag.Frames.Length > 0 ? flag.Frames[0].rect.width : tile, fh = flag.Frames.Length > 0 ? flag.Frames[0].rect.height : tile;
+                // 絵の左側(竿と旗)だけを対象にする。右は何も描かれていない。
+                float left = flag.X - fw / 2;
+                targets.Add(HoverTarget.Rect(HoverTier.Flag, MapHover.FlagText(flag.Node), left, flag.Bottom - fh, left + fw * 0.6f, flag.Bottom));
+            }
+            foreach (var fog in snapshot.Fogs)
+            {
+                if (!positions.TryGetValue(fog.Node, out var p) || !nodes.TryGetValue(fog.Node, out var node)) continue;
+                int radius = Math.Min(1, MapLayout.LandRadius(node.TypedChars)), cx = (int)(p.X / tile), cy = (int)(p.Y / tile);
+                targets.Add(HoverTarget.Rect(HoverTier.Fog, MapHover.FogText(fog.Line),
+                    (cx - radius) * tile - tile / 2, cy * tile - tile / 2, (cx + radius) * tile + tile / 2, cy * tile + tile / 2));
+            }
+            foreach (var candidate in snapshot.Candidates)
+            {
+                if (!positions.TryGetValue(candidate.FromNode, out var f) || !positions.TryGetValue(candidate.ToNode, out var t)) continue;
+                targets.Add(HoverTarget.Segment(HoverTier.Candidate, "関連の候補: " + candidate.Reason, f.X, f.Y, t.X, t.Y, CandidateReach / s));
+            }
+            string text = MapHover.Pick(world.X, world.Y, targets);
+            if (text != null) return text;
+            // 道: 16px のサブマス(サブマス n は世界座標の [n*16-16, n*16))。種別のある道だけ。
+            int sx = Mathf.FloorToInt(world.X / SubSize) + 1, sy = Mathf.FloorToInt(world.Y / SubSize) + 1;
+            if (roads.Owner.TryGetValue(MapCell.Key(sx, sy), out int route) && route >= 0 && route < snapshot.Roads.Count)
+                return MapHover.RoadText(snapshot.Roads[route].Kind);
+            return null;
         }
         private void HideHover() { if (hoverLabel.style.display != DisplayStyle.None) hoverLabel.style.display = DisplayStyle.None; }
         public float Scale => viewport.Scale;
@@ -596,7 +645,7 @@ namespace Cartograph.MapUI
                     if (fogFrames.Length == 0)
                     { WorldQuad(quads, p.X + x * MapLayout.Tile, p.Y, MapLayout.Tile, new Color32(181, 193, 208, 125)); continue; }
                     int cx = (int)(p.X / MapLayout.Tile) + x, cy = (int)(p.Y / MapLayout.Tile);
-                    AddTile(sprites, cx, cy, fogFrames[(frame + MapLayout.StableHash(fog.Node + ":" + fog.Line)) % fogFrames.Length]);
+                    AddTile(sprites, cx, cy, fogFrames[(frame / FogFrameDivisor + MapLayout.StableHash(fog.Node + ":" + fog.Line)) % fogFrames.Length]);
                 }
             }
             FlushSprites(context, sprites); sprites.Clear();
@@ -937,10 +986,30 @@ namespace Cartograph.MapUI
                 if (sheet.Length < 4 * MapArt.CharacterFrames) continue;
                 var pose = npc.At(seconds);
                 float x = pose.X * tile, baseline = pose.Y * tile + tile / 2;
+                SnapToRoadStrip(pose.X, pose.Y, ref x, ref baseline);
                 if (x < left || x > right || baseline < top || baseline > bottom) continue;
                 one.Clear();
                 if (AddAnchored(one, x, baseline, sheet[(int)pose.Facing * MapArt.CharacterFrames + pose.Frame])) objects.Add(new DepthSprite(baseline, LayerNpc, objects.Count, one[0]));
             }
+        }
+        // 道だけのマス(土地でない)にいる人物は、道の 16px の筋の中心に寄せる。道がマスの縦(横)の 1 列だけなら x(y)を寄せる。
+        private void SnapToRoadStrip(float cellX, float cellY, ref float x, ref float baseline)
+        {
+            if (npcRoadOnly.Count == 0) return;
+            int cx = Mathf.RoundToInt(cellX), cy = Mathf.RoundToInt(cellY);
+            if (!npcRoadOnly.Contains(MapCell.Key(cx, cy))) return;
+            int minX = int.MaxValue, maxX = int.MinValue, minY = int.MaxValue, maxY = int.MinValue;
+            for (int i = 0; i < 2; i++)
+            for (int j = 0; j < 2; j++)
+            {
+                int sx = cx * 2 + i, sy = cy * 2 + j;
+                if (!roads.Mask.ContainsKey(MapRoads.Sub(sx, sy))) continue;
+                if (sx < minX) minX = sx; if (sx > maxX) maxX = sx; if (sy < minY) minY = sy; if (sy > maxY) maxY = sy;
+            }
+            if (minX == int.MaxValue) return;
+            // サブマス sx の中心は (sx * SubSize - SubSize / 2)。足元の高さは中心座標(マスの中心)に tile / 2 を足したもの。
+            if (minX == maxX) x = minX * SubSize - SubSize / 2;
+            if (minY == maxY) baseline = (minY * SubSize - SubSize / 2) + MapLayout.Tile / 2;
         }
         private void AddFlags(List<DepthSprite> objects, List<Quad> quads, MapArt art)
         {

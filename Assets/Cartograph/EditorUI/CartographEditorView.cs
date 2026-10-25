@@ -254,6 +254,13 @@ namespace Cartograph.EditorUI
             Button(toolbar, "箇条書き", () => PrefixLine("- "));
             Button(toolbar, "番号付き", () => PrefixLine("1. "));
             relatedControl = new RelatedNotesControl(); paper.Add(relatedControl);
+            relatedControl.LinkRequested += (targetId, kind, reason) => Run(() =>
+            {
+                var edit = RelatedNoteLink.Insert(body.value, EditorCursor, activeId, targetId,
+                    workspace.Documents.Select(d => d.id), kind, reason);
+                SetBody(edit.Text, edit.Cursor, edit.Cursor);
+                return Task.CompletedTask;
+            });
             relatedControl.ConnectionRequested += (targetId, connect) => Run(async () =>
             {
                 if (connect)

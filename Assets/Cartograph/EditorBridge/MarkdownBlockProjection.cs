@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Text;
 using System.Text.RegularExpressions;
 using Cartograph.Core;
+using Cartograph.EditorUI.Navigation;
 
 namespace Cartograph.EditorUI
 {
@@ -16,10 +17,12 @@ namespace Cartograph.EditorUI
         public string Raw { get; }
         public string DisplayText { get; }
         public int HeadingLevel { get; }
+        /// <summary>前提/対比/具体例の記号つきの行。記号は表示から外し、色とバッジで示す。</summary>
+        public LinkMarkerKind Marker { get; }
         public bool HasSoftBreakAfter => Raw.EndsWith("  ", StringComparison.Ordinal);
         public bool IsRelatedLink => System.Text.RegularExpressions.Regex.IsMatch(Raw, @"^\s*\[\[[^\]\r\n]+\]\]\s*$");
-        internal MarkdownBlock(int start, string raw, int prefix, int heading, string display, int[] offsets)
-        { SourceStart = start; Raw = raw; prefixLength = prefix; HeadingLevel = heading; DisplayText = display; visibleOffsets = offsets; }
+        internal MarkdownBlock(int start, string raw, int prefix, int heading, string display, int[] offsets, LinkMarkerKind marker = LinkMarkerKind.None)
+        { SourceStart = start; Raw = raw; prefixLength = prefix; HeadingLevel = heading; DisplayText = display; visibleOffsets = offsets; Marker = marker; }
         public int RawOffset(int displayOffset)
         {
             if (displayOffset < 0 || displayOffset > DisplayText.Length) throw new ArgumentOutOfRangeException(nameof(displayOffset));
@@ -68,12 +71,13 @@ namespace Cartograph.EditorUI
                 if (length > 0 && raw[end - 1] == '\r') length--;
                 string line = raw.Substring(start, length);
                 var prefix = Prefix.Match(line);
-                int skip = prefix.Success ? prefix.Length : 0;
-                int heading = prefix.Success ? prefix.Groups[2].Length : 0;
+                int markerLength = LinkMarker.PrefixLength(line, out var marker);
+                int skip = markerLength > 0 ? markerLength : prefix.Success ? prefix.Length : 0;
+                int heading = markerLength == 0 && prefix.Success ? prefix.Groups[2].Length : 0;
                 var display = new StringBuilder(); var offsets = new List<int>();
                 int displayEnd = line.EndsWith("  ", StringComparison.Ordinal) ? line.Length - 2 : line.Length;
                 ProjectInline(line, skip, Math.Max(skip, displayEnd), display, offsets);
-                blocks.Add(new MarkdownBlock(start, line, skip, heading, display.ToString(), offsets.ToArray()));
+                blocks.Add(new MarkdownBlock(start, line, skip, heading, display.ToString(), offsets.ToArray(), marker));
                 if (end == raw.Length) break;
                 start = end + 1;
             }

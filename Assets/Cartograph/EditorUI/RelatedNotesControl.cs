@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.Linq;
+using Cartograph.EditorUI.Navigation;
+using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace Cartograph.EditorUI
@@ -15,17 +17,26 @@ namespace Cartograph.EditorUI
 
         public event Action<string> Requested;
         public event Action<string, bool> ConnectionRequested;
+        /// <summary>Connect with a chosen road kind and optional reason (target id, kind, reason).</summary>
+        public event Action<string, LinkMarkerKind, string> LinkRequested;
+        private readonly VisualElement options;
+        private readonly Label optionsTarget;
+        private readonly TextField reasonField;
+        private string pendingTargetId;
 
         public RelatedNotesControl()
         {
             AddToClassList("related-notes");
             style.flexDirection = FlexDirection.Row;
+            style.flexWrap = Wrap.Wrap;
             Add(new Label("関連ノート"));
             picker = new Button(OpenMenu) { name = "related-note-picker", text = "関連ノートを選ぶ ▾" };
             picker.style.flexGrow = 1;
             picker.style.minWidth = 0;
             picker.tooltip = "ノートを選ぶと、現在の段落から相手のノートへ地図の線をつなぎます。";
             Add(picker);
+            options = BuildOptions(out optionsTarget, out reasonField);
+            Add(options);
             SetNotes(null, Array.Empty<DocumentRecord>());
         }
 
@@ -52,6 +63,7 @@ namespace Cartograph.EditorUI
             {
                 currentDocumentId = currentId;
                 connections.Clear();
+                HideOptions();
             }
             if (!targets.SequenceEqual(nextTargets)) targets = nextTargets;
             var enabled = !string.IsNullOrEmpty(currentId) && targets.Count > 0;
@@ -96,12 +108,76 @@ namespace Cartograph.EditorUI
                     if (ownerId != currentDocumentId ||
                         !targets.Any(item => item.Value == targetId)) return;
                     var connect = !connections.Contains(targetId);
+                    if (connect && LinkRequested != null) { ShowOptions(targetId, target.Key); return; }
                     ConnectionRequested?.Invoke(targetId, connect);
                     // Legacy consumers only supported adding a link.
                     if (ConnectionRequested == null && connect) Requested?.Invoke(targetId);
                 });
             }
             menu.DropDown(picker.worldBound, picker, default(DropdownMenuSizeMode));
+        }
+
+        private VisualElement BuildOptions(out Label targetLabel, out TextField reason)
+        {
+            var panel = new VisualElement { name = "related-note-options" };
+            panel.style.display = DisplayStyle.None;
+            panel.style.width = Length.Percent(100);
+            panel.style.flexDirection = FlexDirection.Row;
+            panel.style.flexWrap = Wrap.Wrap;
+            panel.style.alignItems = Align.Center;
+            panel.style.marginTop = 4;
+            targetLabel = new Label();
+            targetLabel.style.marginRight = 6;
+            targetLabel.style.unityFontStyleAndWeight = FontStyle.Bold;
+            panel.Add(targetLabel);
+            AddKindButton(panel, LinkMarkerKind.Premise, "前提", "このノートは、相手のノートを前提にしている");
+            AddKindButton(panel, LinkMarkerKind.Contrast, "対比", "相手のノートと対比している");
+            AddKindButton(panel, LinkMarkerKind.Example, "具体例", "相手のノートの具体例");
+            AddKindButton(panel, LinkMarkerKind.None, "指定なし", "種類を決めずにつなぐ");
+            reason = new TextField { name = "related-note-reason" };
+            reason.style.flexGrow = 1; reason.style.minWidth = 120; reason.style.marginLeft = 6;
+            reason.tooltip = "つなぐ理由（省略できます）。種類を選ぶ前に入力してください。";
+            panel.Add(reason);
+            var cancel = new Button(HideOptions) { text = "やめる" };
+            panel.Add(cancel);
+            return panel;
+        }
+
+        private void AddKindButton(VisualElement parent, LinkMarkerKind kind, string text, string tip)
+        {
+            var button = new Button(() => Confirm(kind)) { text = text, tooltip = tip };
+            if (kind != LinkMarkerKind.None)
+            {
+                LinkMarker.Color(kind, out byte r, out byte g, out byte b);
+                button.style.color = (Color)new Color32(r, g, b, 255);
+            }
+            parent.Add(button);
+        }
+
+        private void ShowOptions(string targetId, string label)
+        {
+            pendingTargetId = targetId;
+            optionsTarget.text = (label ?? targetId).Replace("★ ", "") + " へ：";
+            reasonField.SetValueWithoutNotify("");
+            options.style.display = DisplayStyle.Flex;
+        }
+
+        private void HideOptions()
+        {
+            pendingTargetId = null;
+            options.style.display = DisplayStyle.None;
+            reasonField.SetValueWithoutNotify("");
+        }
+
+        private void Confirm(LinkMarkerKind kind)
+        {
+            var targetId = pendingTargetId;
+            var reason = reasonField.value;
+            HideOptions();
+            // A refresh may have removed the target while the buttons were open.
+            if (targetId == null || string.IsNullOrEmpty(currentDocumentId) ||
+                !targets.Any(item => item.Value == targetId)) return;
+            LinkRequested?.Invoke(targetId, kind, reason);
         }
 
         // Kept for callers that reset after a failed insertion; a menu has no selected placeholder.

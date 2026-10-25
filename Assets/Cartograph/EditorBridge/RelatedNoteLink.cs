@@ -13,7 +13,8 @@ namespace Cartograph.EditorUI
     }
     public static class RelatedNoteLink
     {
-        public static RelatedLinkEdit Insert(string text, int cursor, string current, string target, IEnumerable<string> notes)
+        public static RelatedLinkEdit Insert(string text, int cursor, string current, string target, IEnumerable<string> notes,
+            Navigation.LinkMarkerKind kind = Navigation.LinkMarkerKind.None, string reason = null)
         {
             var ids = new HashSet<string>(notes ?? Array.Empty<string>(), StringComparer.Ordinal);
             if (current == null || !ids.Contains(current) || !ids.Contains(target ?? "") || target == current)
@@ -30,7 +31,7 @@ namespace Cartograph.EditorUI
             if (parsed.Links.Any(link => link.TargetNote == target && link.TargetHeading == null))
                 return new RelatedLinkEdit(text, cursor);
             int end = text.IndexOf('\n', cursor); if (end < 0) end = text.Length;
-            string link = (end > 0 && text[end - 1] != '\n' ? "\n" : "") + "[[" + target + "]]\n";
+            string link = (end > 0 && text[end - 1] != '\n' ? "\n" : "") + Navigation.LinkMarker.BuildLine(kind, target, reason) + "\n";
             return new RelatedLinkEdit(text.Insert(end, link), end + link.Length);
         }
     }
