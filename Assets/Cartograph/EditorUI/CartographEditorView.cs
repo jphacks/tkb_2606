@@ -150,6 +150,8 @@ namespace Cartograph.EditorUI
             mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
             RememberWidth(mapPanel, MapWidthKey);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
+            mapPanel.CandidateAccepted += AcceptCandidate;
+            mapPanel.CandidateRejected += RejectCandidate;
             mapPanel.LayoutChanged += QueueLayoutSave;
             var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
             rightWorkspace.style.minWidth = 420; rightWorkspace.style.flexGrow = 1; contentSplit.Add(rightWorkspace);
@@ -453,6 +455,7 @@ namespace Cartograph.EditorUI
             var documents = workspace.Documents;
             relatedControl.SetNotes(current?.id, documents);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(displayedMap, current?.id));
+            relatedControl.SetSuggestions(MapAnalysisAdapter.SuggestedNotes(displayedMap, current?.id));
             QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
             rich.Bind(workspace as IReviewingEditorWorkspace, current);
@@ -690,6 +693,24 @@ namespace Cartograph.EditorUI
                 QueueRepaint(); projectTransition.style.display = DisplayStyle.None;
             }).StartingIn(100);
         }
+        // 地図の点線(自動検出の候補)を承認する: どちらかのノートの末尾にリンクを書き足す。
+        // いま開いているノートが片方なら、そのノートに足す。
+        private void AcceptCandidate(MapCandidate candidate) => Run(async () =>
+        {
+            var target = workspace as ProjectEditorWorkspace;
+            if (target == null) return;
+            string owner = candidate.ToNote == activeId ? candidate.ToNote : candidate.FromNote;
+            string other = owner == candidate.FromNote ? candidate.ToNote : candidate.FromNote;
+            await target.AppendRelatedLink(owner, other);
+            if (owner == activeId) reviewed.Bind(null, null);
+        });
+        private void RejectCandidate(MapCandidate candidate)
+        {
+            if (!(workspace is ProjectEditorWorkspace target)) return;
+            if (!target.RejectRelated(candidate.FromNote, candidate.ToNote))
+                message.text = "却下を保存できませんでした。この起動の間だけ、提案しません。";
+            mapVersionSignature = null; QueueMapRequest(workspace.Documents);
+        }
         private async Task DisconnectRelated(string targetId)
         {
             if (!(workspace is IReviewingEditorWorkspace source) || activeId == null)
@@ -743,7 +764,7 @@ namespace Cartograph.EditorUI
             rich?.ResetHistory(); secondaryPane?.ResetHistory();
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
-            displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());
+            displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>()); relatedControl?.SetSuggestions(null);
             mapPanel?.Present(null); focusCursor = -1; focusNote = null; focusText = null;
             // 開いたプロジェクトに保存してあった拠点の位置を、最初の解析結果が来る前に渡す。
             if (workspace is ProjectEditorWorkspace project && project.ProjectRoot != null) mapPanel?.SetSavedLayout(project.LoadMapLayout());
@@ -785,6 +806,7 @@ namespace Cartograph.EditorUI
             displayedMap = snapshot;
             UpdateMapFocus(true);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(snapshot, workspace.Current?.id));
+            relatedControl.SetSuggestions(MapAnalysisAdapter.SuggestedNotes(snapshot, workspace.Current?.id));
         }
         private async void AnalyzeMap(MapRequest request)
         {
@@ -793,7 +815,7 @@ namespace Cartograph.EditorUI
                 mapProjectKey == request.ProjectKey && mapGeneration == request.Generation;
             try
             {
-                var snapshot = await MapAnalysisAdapter.Analyze(source, request, Current);
+                var snapshot = await MapAnalysisAdapter.Analyze(source, request, Current, source.RejectedRelatedPairs().ToArray());
                 if (Current()) PresentMap(snapshot);
             }
             catch (OperationCanceledException) { }

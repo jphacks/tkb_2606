@@ -113,6 +113,12 @@
     color: rgb(210, 222, 232); background-color: rgba(10, 20, 33, 0.93);
     border-radius: 6px; padding: 8px 10px;
 }
+.cartowords .map-candidate-bar {
+    position: absolute; bottom: 118px; left: 12px; flex-direction: row;
+    padding: 4px; border-radius: 7px; background-color: rgba(10, 20, 33, 0.93);
+    border-width: 1px; border-color: rgb(88, 188, 210);
+}
+.cartowords .map-candidate-bar .unity-button { font-size: 12px; padding: 4px 12px; margin-right: 6px; }
 .cartowords .map-preview-button { position: absolute; bottom: 65px; right: 12px; font-size: 11px; }
 .cartowords .right-workspace { padding: 10px; background-color: rgb(29, 34, 48); }
 .cartowords .note-header { padding: 4px 12px; flex-shrink: 0; }

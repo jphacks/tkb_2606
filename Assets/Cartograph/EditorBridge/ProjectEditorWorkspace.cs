@@ -62,6 +62,48 @@ namespace Cartograph.EditorUI
             catch (IOException) { return false; }
             catch (UnauthorizedAccessException) { return false; }
         }
+        // 却下した関連ノートの候補(.cartograph/related-rejected.txt)。再提案しない。
+        private string RejectedPath => Path.Combine(project.Root, ".cartograph", "related-rejected.txt");
+        private HashSet<Cartograph.Analysis.RelatedPair> rejectedPairs; private string rejectedRoot;
+        public IReadOnlyCollection<Cartograph.Analysis.RelatedPair> RejectedRelatedPairs()
+        {
+            if (project == null) return Array.Empty<Cartograph.Analysis.RelatedPair>();
+            if (rejectedPairs == null || rejectedRoot != project.Root)
+            {
+                try { rejectedPairs = RelatedRejectFile.Parse((fileSystem ?? new DiskFileSystem()).ReadAllText(RejectedPath)); }
+                catch (IOException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
+                catch (UnauthorizedAccessException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
+                rejectedRoot = project.Root;
+            }
+            return rejectedPairs;
+        }
+        /// <summary>候補を却下する。書き込めなくてもこの起動の間は覚えておき、失敗は false で返す。</summary>
+        public bool RejectRelated(string first, string second)
+        {
+            if (project == null) return false;
+            RejectedRelatedPairs();
+            rejectedPairs.Add(new Cartograph.Analysis.RelatedPair(first, second));
+            try { (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(RejectedPath, RelatedRejectFile.Serialize(rejectedPairs)); return true; }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
+        /// <summary>owner ノートの末尾に other への関連リンクを足す(地図の候補を承認するとき)。</summary>
+        public async Task AppendRelatedLink(string owner, string other)
+        {
+            if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
+            await LoadDocument(owner); await LoadDocument(other);
+            var record = Record(Require(owner));
+            var edit = RelatedNoteLink.Insert(record.markdown, (record.markdown ?? "").Length, owner, other, project.AllNotes().Select(p => p.Value));
+            if (edit.Text == record.markdown) return;
+            int at = (record.markdown ?? "").Length;
+            var result = ReviewDocument(owner, record.revision, new ChangeCandidate
+            {
+                NewText = edit.Text, SelStartBefore = at, SelEndBefore = at,
+                Evidence = new InputEvidence { Kind = EvidenceKind.Format }
+            });
+            if (!result.Approved) throw new InvalidOperationException(result.Reason);
+            await FlushSave();
+        }
         public ProjectEditorWorkspace(NoteSessionOptions options = null, IFileSystem fileSystem = null)
         { this.options = options ?? new NoteSessionOptions { SaveDebounceMs = 200 }; this.fileSystem = fileSystem; }
         public event Action Changed;

@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Linq;
 using Cartowords.MapPresentation;
 using UnityEngine.UIElements;
 
@@ -44,11 +45,24 @@ namespace Cartograph.MapUI
                 info.text = isPreview ? "ドラッグで移動・ホイールで拡大縮小。サンプルから実ノートは開きません。" : "解析データ待ち";
             });
             preview.AddToClassList("map-preview-button"); Add(preview);
-            canvas.NodeSelected += node => info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く";
+            // 関連ノートの候補(点線)を選んだ時の「つなぐ / 却下」。
+            candidateBar.AddToClassList("map-candidate-bar"); candidateBar.style.display = DisplayStyle.None;
+            candidateBar.Add(new Button(() => ResolveCandidate(true)) { text = "つなぐ", tooltip = "このノートどうしを関連づけます(リンクを書き足します)" });
+            candidateBar.Add(new Button(() => ResolveCandidate(false)) { text = "却下", tooltip = "この候補はもう提案しません" });
+            Add(candidateBar);
+            canvas.CandidateSelected += candidate =>
+            {
+                shownCandidate = candidate; candidateBar.style.display = isPreview ? DisplayStyle.None : DisplayStyle.Flex;
+                info.text = "関連の候補: " + candidate.FromNote + " と " + candidate.ToNote + " / " + candidate.Reason;
+            };
+            canvas.NodeSelected += node => { HideCandidate(); info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く"; };
             canvas.LayoutChanged += layout => { if (!isPreview) LayoutChanged?.Invoke(layout); };
-            canvas.MarkSelected += message => info.text = message;
+            canvas.MarkSelected += message => { HideCandidate(); info.text = message; };
             canvas.BuildingSelected += (building, node) =>
+            {
+                HideCandidate();
                 info.text = building.Name + " / 「" + node.Title + "」に " + building.Count + " 回 / ダブルクリックで開く";
+            };
             canvas.BuildingDoubleClicked += (building, node) =>
             {
                 if (isPreview) { info.text = "表示サンプルです。実ノートの編集は行いません。"; return; }
@@ -60,8 +74,22 @@ namespace Cartograph.MapUI
                 OpenNoteRequested?.Invoke(node.File, node.Line);
             };
         }
+        private readonly VisualElement candidateBar = new VisualElement();
+        private MapCandidate shownCandidate;
+        public event Action<MapCandidate> CandidateAccepted;
+        public event Action<MapCandidate> CandidateRejected;
+        private void HideCandidate()
+        { shownCandidate = null; candidateBar.style.display = DisplayStyle.None; canvas.ClearCandidateSelection(); }
+        private void ResolveCandidate(bool accept)
+        {
+            var candidate = shownCandidate; HideCandidate();
+            if (candidate == null) return;
+            if (accept) CandidateAccepted?.Invoke(candidate); else CandidateRejected?.Invoke(candidate);
+        }
         public void Present(MapSnapshot snapshot)
         {
+            // 新しい解析結果に、選んでいた候補がなければ(承認・却下の直後など)、操作欄を閉じる。
+            if (shownCandidate != null && (snapshot == null || !snapshot.Candidates.Any(c => c.Key == shownCandidate.Key))) HideCandidate();
             latest = snapshot; isPreview = false; preview.text = "表示サンプル";
             caption.text = "MAP VIEW"; canvas.SetSnapshot(snapshot);
             if (snapshot == null) editorNode = null;

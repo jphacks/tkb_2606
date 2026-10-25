@@ -38,6 +38,27 @@ namespace Cartowords.MapPresentation
         public MapRoad(string from, string to, RoadKind kind = RoadKind.Unspecified, bool auto = false)
         { From = from; To = to; Kind = kind; Auto = auto; }
     }
+    /// <summary>自動検出した関連ノートの候補。確定した道ではなく、点線で示して承認を待つ。</summary>
+    public sealed class MapCandidate
+    {
+        public string FromNode { get; }
+        public string ToNode { get; }
+        /// <summary>候補になった 2 つのノート(Node.File)。</summary>
+        public string FromNote { get; }
+        public string ToNote { get; }
+        public double Score { get; }
+        /// <summary>画面に出せる理由(複数ある場合は " / " でつないだもの)。</summary>
+        public string Reason { get; }
+        public string Key => FromNote + "\u0001" + ToNote;
+        public MapCandidate(string fromNode, string toNode, string fromNote, string toNote, double score, string reason)
+        {
+            if (string.IsNullOrEmpty(fromNode) || string.IsNullOrEmpty(toNode) || string.IsNullOrEmpty(fromNote) ||
+                string.IsNullOrEmpty(toNote) || fromNote == toNote)
+                throw new ArgumentException("Invalid related-note candidate.");
+            FromNode = fromNode; ToNode = toNode; FromNote = fromNote; ToNote = toNote;
+            Score = score; Reason = reason ?? "";
+        }
+    }
     public sealed class MapFog
     {
         public string Node { get; }
@@ -82,10 +103,12 @@ namespace Cartowords.MapPresentation
         public IReadOnlyList<MapMark> Marks { get; }
         public IReadOnlyList<MapFlower> Flowers { get; }
         public IReadOnlyList<MapBuilding> Buildings { get; }
+        public IReadOnlyList<MapCandidate> Candidates { get; }
         public MapSnapshot(MapRequest request, IEnumerable<MapNode> nodes, IEnumerable<MapRoad> roads = null,
             IEnumerable<MapFog> fogs = null, IEnumerable<MapMark> marks = null, IEnumerable<MapFlower> flowers = null,
-            int schemaVersion = 1, IEnumerable<MapBuilding> buildings = null)
+            int schemaVersion = 1, IEnumerable<MapBuilding> buildings = null, IEnumerable<MapCandidate> candidates = null)
         {
+            Candidates = Array.AsReadOnly((candidates ?? Array.Empty<MapCandidate>()).ToArray());
             Buildings = Array.AsReadOnly((buildings ?? Array.Empty<MapBuilding>()).ToArray());
             Request = request ?? throw new ArgumentNullException(nameof(request)); SchemaVersion = schemaVersion;
             Nodes = Array.AsReadOnly((nodes ?? throw new ArgumentNullException(nameof(nodes))).ToArray());
@@ -99,7 +122,8 @@ namespace Cartowords.MapPresentation
                 Fogs.Any(f => f == null || !ids.Contains(f.Node) || f.Line < 1) ||
                 Marks.Any(m => m == null || !ids.Contains(m.Node) || !Enum.IsDefined(typeof(MarkKind), m.Kind)) ||
                 Flowers.Any(f => f == null || !ids.Contains(f.Node) || f.Line < 1 || !Enum.IsDefined(typeof(Emotion), f.Emotion)) ||
-                Buildings.Any(b => b == null || !ids.Contains(b.Node)))
+                Buildings.Any(b => b == null || !ids.Contains(b.Node)) ||
+                Candidates.Any(c => c == null || !ids.Contains(c.FromNode) || !ids.Contains(c.ToNode)))
                 throw new ArgumentException("Invalid map item or unknown node reference.");
         }
     }

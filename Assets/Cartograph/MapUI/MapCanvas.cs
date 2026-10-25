@@ -37,6 +37,29 @@ namespace Cartograph.MapUI
         private readonly Dictionary<string, int> appearing = new Dictionary<string, int>(StringComparer.Ordinal);
         private static string BuildingKey(MapBuilding building) => building.File + "|" + building.Node;
         private string selected, lastClick;
+        // 選んだ関連ノートの候補(MapCandidate.Key)。拠点の選択とは別に点線を太く示す。
+        private string selectedCandidate;
+        public event Action<MapCandidate> CandidateSelected;
+        public void ClearCandidateSelection() { if (selectedCandidate != null) { selectedCandidate = null; Repaint(); } }
+        private const float CandidateReach = 8f;
+        private static float DistanceToSegment(Vector2 p, Vector2 a, Vector2 b)
+        {
+            var ab = b - a; float t = ab.sqrMagnitude < 0.0001f ? 0 : Mathf.Clamp01(Vector2.Dot(p - a, ab) / ab.sqrMagnitude);
+            return (p - (a + ab * t)).magnitude;
+        }
+        private MapCandidate CandidateAt(Vector2 at)
+        {
+            if (snapshot == null) return null;
+            MapCandidate best = null; float bestDistance = CandidateReach;
+            foreach (var candidate in snapshot.Candidates)
+            {
+                if (!positions.TryGetValue(candidate.FromNode, out var f) || !positions.TryGetValue(candidate.ToNode, out var t)) continue;
+                var a = viewport.Screen(f); var b = viewport.Screen(t);
+                float distance = DistanceToSegment(at, new Vector2(a.X, a.Y), new Vector2(b.X, b.Y));
+                if (distance < bestDistance) { bestDistance = distance; best = candidate; }
+            }
+            return best;
+        }
         private float lastClickAt;
         private Vector2 pointerStart, previousPointer;
         private bool dragging, moved, pendingFit;
@@ -156,6 +179,7 @@ namespace Cartograph.MapUI
             }
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
             if (value == null || !value.Nodes.Any(n => n.Id == editorNode)) editorNode = null;
+            if (value == null || !value.Candidates.Any(c => c.Key == selectedCandidate)) selectedCandidate = null;
             var before = new HashSet<long>(land);
             nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); natureItems.Clear(); HideHover();
             long setStart = MapProfile.Start(), setPhase = setStart;
@@ -332,7 +356,14 @@ namespace Cartograph.MapUI
         private void UpdateHover(Vector2 at)
         {
             int index = BuildingAt(at);
-            if (index < 0) { HideHover(); return; }
+            if (index < 0)
+            {
+                var candidate = CandidateAt(at);
+                if (candidate == null) { HideHover(); return; }
+                hoverLabel.text = "関連の候補: " + candidate.Reason;
+                hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
+                return;
+            }
             var building = placements[index].Building;
             hoverLabel.text = building.Name + "  ×" + building.Count;
             hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
@@ -385,6 +416,7 @@ namespace Cartograph.MapUI
         private void SelectAt(Vector2 at)
         {
             if (snapshot == null) return;
+            selectedCandidate = null;
             foreach (var mark in snapshot.Marks)
             {
                 var p = viewport.Screen(positions[mark.Node]); float s = viewport.Scale, reach = Mathf.Max(10, 12 * s);
@@ -407,7 +439,13 @@ namespace Cartograph.MapUI
                 var p = viewport.Screen(pair.Value); float squared = (new Vector2(p.X, p.Y) - at).sqrMagnitude;
                 if (squared < distance) { distance = squared; closest = pair.Key; }
             }
-            if (closest == null) { selected = null; lastClick = null; Repaint(); return; }
+            if (closest == null)
+            {
+                selected = null; lastClick = null;
+                var candidate = CandidateAt(at);
+                if (candidate != null) { selectedCandidate = candidate.Key; CandidateSelected?.Invoke(candidate); }
+                Repaint(); return;
+            }
             selected = closest; NodeSelected?.Invoke(nodes[closest]);
             if (lastClick == closest && Time.realtimeSinceStartup - lastClickAt < 0.35f)
             { lastClick = null; NodeDoubleClicked?.Invoke(nodes[closest]); }
@@ -519,6 +557,23 @@ namespace Cartograph.MapUI
                     var tip = to - direction * 9;
                     painter.MoveTo(tip - direction * 8 + normal * 4); painter.LineTo(tip); painter.LineTo(tip - direction * 8 - normal * 4);
                 }
+                painter.Stroke();
+            }
+            // 自動検出した関連ノートの候補は、確定した道と区別できる点線で描く。
+            foreach (var candidate in snapshot.Candidates)
+            {
+                if (!positions.TryGetValue(candidate.FromNode, out var cf) || !positions.TryGetValue(candidate.ToNode, out var ct)) continue;
+                var a = viewport.Screen(cf); var b = viewport.Screen(ct);
+                Vector2 from = new Vector2(a.X, a.Y), to = new Vector2(b.X, b.Y);
+                if (!new Rect(Math.Min(a.X, b.X) - 10, Math.Min(a.Y, b.Y) - 10, Math.Abs(a.X - b.X) + 20,
+                    Math.Abs(a.Y - b.Y) + 20).Overlaps(viewRect)) continue;
+                bool chosen = candidate.Key == selectedCandidate;
+                painter.lineWidth = chosen ? 4 : 2.5f;
+                painter.strokeColor = chosen ? new Color32(120, 235, 245, 255) : new Color32(120, 205, 225, 200);
+                float length = (to - from).magnitude; int dashes = Mathf.Clamp((int)(length / 14f), 2, 200);
+                painter.BeginPath();
+                for (int i = 0; i < dashes; i++)
+                { painter.MoveTo(Vector2.Lerp(from, to, i / (float)dashes)); painter.LineTo(Vector2.Lerp(from, to, (i + 0.55f) / dashes)); }
                 painter.Stroke();
             }
             foreach (var fog in snapshot.Fogs)
