@@ -16,6 +16,7 @@ namespace Cartograph.EditorUI
         private sealed class Row
         {
             public TextField Field;
+            public Label Badge;
             public ReviewedTextBinding Binding;
             public BlockEditorWorkspace Workspace;
         }
@@ -254,7 +255,7 @@ namespace Cartograph.EditorUI
                         FocusRaw(at, at);
                     }, TrickleDown.TrickleDown);
                     var binding = new ReviewedTextBinding(field, composing, notice);
-                    rows.Add(new Row { Field = field, Binding = binding, Workspace = facade });
+                    rows.Add(new Row { Field = field, Binding = binding, Workspace = facade, Badge = MakeBadge(field) });
                     scroll.Add(field);
                 }
             }
@@ -266,8 +267,43 @@ namespace Cartograph.EditorUI
                 rows[i].Field.style.marginBottom = blocks[i].HasSoftBreakAfter ? 0 : 13;
                 rows[i].Field.style.minHeight = blocks[i].HeadingLevel == 1 ? 36 : blocks[i].HeadingLevel == 2 ? 30 : blocks[i].HeadingLevel > 0 ? 26 : 22;
                 rows[i].Field.style.paddingTop = rows[i].Field.style.paddingBottom = 0;
+                ApplyMarker(rows[i], blocks[i].Marker);
             }
             if (rebuild && focused) QueueFocus(cursor, selection);
+        }
+        /// <summary>A badge drawn over the left padding of a row; it replaces the hidden ==&gt; / &lt;-&gt; / ..&gt; characters.</summary>
+        private static Label MakeBadge(TextField field)
+        {
+            var badge = new Label { name = "road-kind-badge", pickingMode = PickingMode.Ignore };
+            badge.style.position = Position.Absolute;
+            badge.style.left = 0; badge.style.top = 1;
+            badge.style.fontSize = 12;
+            badge.style.unityFontStyleAndWeight = FontStyle.Bold;
+            badge.style.paddingLeft = badge.style.paddingRight = 4;
+            badge.style.borderTopLeftRadius = badge.style.borderTopRightRadius =
+                badge.style.borderBottomLeftRadius = badge.style.borderBottomRightRadius = 3;
+            badge.style.display = DisplayStyle.None;
+            field.Add(badge);
+            return badge;
+        }
+        private static void ApplyMarker(Row row, Navigation.LinkMarkerKind kind)
+        {
+            if (kind == Navigation.LinkMarkerKind.None)
+            {
+                row.Badge.style.display = DisplayStyle.None;
+                row.Field.style.paddingLeft = 0;
+                row.Field.style.borderLeftWidth = 0;
+                return;
+            }
+            Navigation.LinkMarker.Color(kind, out byte r, out byte g, out byte b);
+            Color color = new Color32(r, g, b, 255);
+            row.Badge.text = Navigation.LinkMarker.Icon(kind);
+            row.Badge.style.color = color;
+            row.Badge.style.backgroundColor = (Color)new Color32(r, g, b, 40);
+            row.Badge.style.display = DisplayStyle.Flex;
+            row.Field.style.paddingLeft = 76;
+            row.Field.style.borderLeftWidth = 3;
+            row.Field.style.borderLeftColor = color;
         }
         private void QueueFocus(int start, int end)
         {

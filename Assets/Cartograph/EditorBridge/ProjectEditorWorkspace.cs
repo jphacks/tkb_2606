@@ -32,6 +32,11 @@ namespace Cartograph.EditorUI
         private readonly SynchronizationContext context = SynchronizationContext.Current;
         private readonly NoteSessionOptions options;
         private readonly IFileSystem fileSystem;
+        // デモプロジェクトを開いている間だけ入る、メモリ上のファイルシステム。入っている間は、ディスクには何も書かない。
+        private IFileSystem demoFs;
+        private DateTime demoStamp;
+        private IFileSystem Fs => demoFs ?? fileSystem ?? new DiskFileSystem();
+        public bool IsDemo => demoFs != null;
         private ProjectWorkspace project;
         private string currentId;
         private string bookTitle;
@@ -42,7 +47,7 @@ namespace Cartograph.EditorUI
             value = (value ?? "").Trim();
             if (value.Length == 0 || value.Contains("\n") || value.Contains("\r"))
                 throw new ArgumentException("題名を1行で入力してください。");
-            (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(Path.Combine(project.Root, ".cartograph", "book-title.txt"), value);
+            Fs.WriteAllTextAtomic(Path.Combine(project.Root, ".cartograph", "book-title.txt"), value);
             bookTitle = value; Notify();
         }
         // 拠点の位置の保存(.cartograph/map-layout.txt)。壊れていても、なくても、空の配置として読む。
@@ -50,7 +55,7 @@ namespace Cartograph.EditorUI
         public IReadOnlyDictionary<string, Cartowords.MapPresentation.MapPoint> LoadMapLayout()
         {
             if (project == null) return new Dictionary<string, Cartowords.MapPresentation.MapPoint>();
-            try { return Cartowords.MapPresentation.MapLayoutFile.Parse((fileSystem ?? new DiskFileSystem()).ReadAllText(MapLayoutPath)); }
+            try { return Cartowords.MapPresentation.MapLayoutFile.Parse(Fs.ReadAllText(MapLayoutPath)); }
             catch (IOException) { return new Dictionary<string, Cartowords.MapPresentation.MapPoint>(); }
             catch (UnauthorizedAccessException) { return new Dictionary<string, Cartowords.MapPresentation.MapPoint>(); }
         }
@@ -58,7 +63,7 @@ namespace Cartograph.EditorUI
         public bool SaveMapLayout(IReadOnlyDictionary<string, Cartowords.MapPresentation.MapPoint> positions)
         {
             if (project == null) return false;
-            try { (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(MapLayoutPath, Cartowords.MapPresentation.MapLayoutFile.Serialize(positions)); return true; }
+            try { Fs.WriteAllTextAtomic(MapLayoutPath, Cartowords.MapPresentation.MapLayoutFile.Serialize(positions)); return true; }
             catch (IOException) { return false; }
             catch (UnauthorizedAccessException) { return false; }
         }
@@ -70,7 +75,7 @@ namespace Cartograph.EditorUI
             if (project == null) return Array.Empty<Cartograph.Analysis.RelatedPair>();
             if (rejectedPairs == null || rejectedRoot != project.Root)
             {
-                try { rejectedPairs = RelatedRejectFile.Parse((fileSystem ?? new DiskFileSystem()).ReadAllText(RejectedPath)); }
+                try { rejectedPairs = RelatedRejectFile.Parse(Fs.ReadAllText(RejectedPath)); }
                 catch (IOException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
                 catch (UnauthorizedAccessException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
                 rejectedRoot = project.Root;
@@ -83,7 +88,7 @@ namespace Cartograph.EditorUI
             if (project == null) return false;
             RejectedRelatedPairs();
             rejectedPairs.Add(new Cartograph.Analysis.RelatedPair(first, second));
-            try { (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(RejectedPath, RelatedRejectFile.Serialize(rejectedPairs)); return true; }
+            try { Fs.WriteAllTextAtomic(RejectedPath, RelatedRejectFile.Serialize(rejectedPairs)); return true; }
             catch (IOException) { return false; }
             catch (UnauthorizedAccessException) { return false; }
         }
@@ -107,9 +112,10 @@ namespace Cartograph.EditorUI
         public ProjectEditorWorkspace(NoteSessionOptions options = null, IFileSystem fileSystem = null)
         { this.options = options ?? new NoteSessionOptions { SaveDebounceMs = 200 }; this.fileSystem = fileSystem; }
         public event Action Changed;
-        public bool IsPersistent => true;
-        public string ProjectRoot => project?.Root;
-        public string ProjectName => project == null ? "プロジェクトを開いてください" : Path.GetFileName(project.Root);
+        public bool IsPersistent => !IsDemo;
+        // デモの仮想ルートはディスク上に無いので、外には出さない(位置の保存や、最近開いた場所の記録の対象にならない)。
+        public string ProjectRoot => IsDemo ? null : project?.Root;
+        public string ProjectName => project == null ? "プロジェクトを開いてください" : IsDemo ? DemoProject.Name : Path.GetFileName(project.Root);
         public FolderNode Tree => project?.Tree;
         public IReadOnlyList<NoteTreeEntry> Notes
         {
@@ -130,6 +136,7 @@ namespace Cartograph.EditorUI
         private int timesStamp; private string timesProject;
         private Tuple<DateTime, DateTime> ReadFileTimes(string id)
         {
+            if (IsDemo) return Tuple.Create(demoStamp, demoStamp);
             try
             {
                 var file = Path.Combine(project.Root, "notes", id.Replace('/', Path.DirectorySeparatorChar) + ".md");
@@ -170,15 +177,34 @@ namespace Cartograph.EditorUI
         public async Task OpenProject(string absoluteFolderPath)
         {
             await FlushSave();
-            absoluteFolderPath = ProjectRootResolver.Resolve(absoluteFolderPath, fileSystem ?? new DiskFileSystem());
+            // デモを開いていても、実際のプロジェクトはディスク(または注入された fileSystem)から読む。
+            var real = fileSystem ?? new DiskFileSystem();
+            absoluteFolderPath = ProjectRootResolver.Resolve(absoluteFolderPath, real);
             var next = ProjectWorkspace.Open(absoluteFolderPath, fileSystem, options);
-            string nextTitle = (fileSystem ?? new DiskFileSystem()).ReadAllText(Path.Combine(next.Root, ".cartograph", "book-title.txt"));
+            string nextTitle = real.ReadAllText(Path.Combine(next.Root, ".cartograph", "book-title.txt"));
             if (project != null)
                 foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
-            project = next; open.Clear(); currentId = null;
+            project = next; demoFs = null; rejectedPairs = null; open.Clear(); currentId = null;
             bookTitle = string.IsNullOrWhiteSpace(nextTitle) ? Path.GetFileName(next.Root) : nextTitle.Trim();
             var first = project.AllNotes().FirstOrDefault();
             if (first.IsValid) await OpenDocument(first.Value);
+            Notify();
+        }
+        /// <summary>
+        /// メモリ上だけのデモプロジェクトを開く。ふつうのプロジェクトと同じ ProjectWorkspace で動くが、
+        /// ファイルは InMemoryFileSystem の中にだけあり、ディスクには何も書かない。閉じると消える。
+        /// </summary>
+        public async Task OpenDemo()
+        {
+            await FlushSave();
+            var memory = DemoProject.CreateFileSystem();
+            var next = ProjectWorkspace.Open(DemoProject.Root, memory, options);
+            if (project != null)
+                foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
+            project = next; demoFs = memory; demoStamp = DateTime.UtcNow; rejectedPairs = null; open.Clear(); currentId = null;
+            fileTimes.Clear();
+            bookTitle = DemoProject.Name;
+            await OpenDocument(DemoProject.FirstNote);
             Notify();
         }
         public async Task<DocumentRecord> LoadDocument(string id)
@@ -352,7 +378,7 @@ namespace Cartograph.EditorUI
             await FlushSave();
             if (project != null)
                 foreach (var id in open.Keys.ToArray()) await project.CloseNote(NotePath.Parse(id));
-            project = null; currentId = null; open.Clear(); Notify();
+            project = null; demoFs = null; rejectedPairs = null; currentId = null; open.Clear(); Notify();
         }
         public async Task FlushSave()
         {

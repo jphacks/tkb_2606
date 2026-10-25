@@ -107,6 +107,13 @@ namespace Cartowords.MapPresentation
             var towns = nodes.Select(n => n.Town).Distinct().OrderBy(s => s, StringComparer.Ordinal).ToArray();
             var x = new float[count]; var y = new float[count]; var ax = new float[count]; var ay = new float[count];
             var pinned = new bool[count];
+            var fileOf = new int[count]; var radius = new int[count];
+            var fileIds = new Dictionary<string, int>(StringComparer.Ordinal);
+            for (int i = 0; i < count; i++)
+            {
+                if (!fileIds.TryGetValue(nodes[i].File, out var fileId)) { fileId = fileIds.Count; fileIds[nodes[i].File] = fileId; }
+                fileOf[i] = fileId; radius[i] = LandRadius(nodes[i].TypedChars);
+            }
             var index = new Dictionary<string, int>(StringComparer.Ordinal);
             for (int i = 0; i < count; i++)
             {
@@ -138,8 +145,21 @@ namespace Cartowords.MapPresentation
                         int j = pinned[i] ? freeList[listAt + pair] : pair;
                         float vx = x[i] - x[j], vy = y[i] - y[j];
                         float squared = vx * vx + vy * vy + 64;
-                        if (squared > 300000) continue;
                         float force = 1400 / squared;
+                        if (fileOf[i] == fileOf[j])
+                        {
+                            // 同じファイルの見出しは土地がつながるまで引き合い、近いときの反発は弱める。
+                            float apart = (float)Math.Sqrt(vx * vx + vy * vy + 1);
+                            float rest = Math.Max(1, radius[i] + radius[j]) * Tile;
+                            if (apart > rest)
+                            {
+                                float spring = (apart - rest) * 0.05f / apart;
+                                dx[i] -= vx * spring; dy[i] -= vy * spring; dx[j] += vx * spring; dy[j] += vy * spring;
+                                continue;
+                            }
+                            force *= 0.25f;
+                        }
+                        else if (squared > 300000) continue;
                         dx[i] += vx * force; dy[i] += vy * force; dx[j] -= vx * force; dy[j] -= vy * force;
                     }
                 }
@@ -156,19 +176,70 @@ namespace Cartowords.MapPresentation
             }
             var result = new Dictionary<string, MapPoint>(StringComparer.Ordinal);
             var occupied = new HashSet<string>(StringComparer.Ordinal);
+            // ファイルごとの土地(MapCanvas と同じ円盤の式)。同じファイルの見出しの土地が 1 つにつながるよう、次の見出しは既存の土地に接する場所へ置く。
+            var land = new HashSet<long>[fileIds.Count];
+            for (int f = 0; f < land.Length; f++) land[f] = new HashSet<long>();
             if (previous != null)
-                foreach (var node in nodes)
-                    if (previous.TryGetValue(node.Id, out var point))
-                    { result[node.Id] = point; occupied.Add((int)Math.Round(point.X / Tile) + ":" + (int)Math.Round(point.Y / Tile)); }
+                for (int i = 0; i < count; i++)
+                    if (previous.TryGetValue(nodes[i].Id, out var point))
+                    {
+                        result[nodes[i].Id] = point;
+                        int px = (int)Math.Round(point.X / Tile), py = (int)Math.Round(point.Y / Tile);
+                        occupied.Add(px + ":" + py); AddLand(land[fileOf[i]], px, py, radius[i]);
+                    }
             for (int i = 0; i < count; i++)
             {
                 if (result.ContainsKey(nodes[i].Id)) continue;
+                var mine = land[fileOf[i]];
                 int tx = (int)Math.Round(x[i] / Tile), ty = (int)Math.Round(y[i] / Tile);
-                // Stable, bounded collision resolution at tile resolution.
-                while (!occupied.Add(tx + ":" + ty)) tx++;
+                if (mine.Count == 0)
+                {
+                    // Stable, bounded collision resolution at tile resolution.
+                    while (!occupied.Add(tx + ":" + ty)) tx++;
+                }
+                else
+                {
+                    bool found = false; int bestX = tx, bestY = ty;
+                    for (int ring = 0; ring < 400 && !found; ring++)
+                    {
+                        long bestDistance = long.MaxValue;
+                        for (int oy = -ring; oy <= ring; oy++)
+                        for (int ox = -ring; ox <= ring; ox++)
+                        {
+                            if (Math.Max(Math.Abs(ox), Math.Abs(oy)) != ring) continue;
+                            int cx = tx + ox, cy = ty + oy;
+                            long distance = (long)ox * ox + (long)oy * oy;
+                            if (distance >= bestDistance || occupied.Contains(cx + ":" + cy) || !TouchesLand(mine, cx, cy, radius[i])) continue;
+                            bestDistance = distance; bestX = cx; bestY = cy; found = true;
+                        }
+                    }
+                    tx = bestX; ty = bestY;
+                    while (!occupied.Add(tx + ":" + ty)) tx++;
+                }
+                AddLand(mine, tx, ty, radius[i]);
                 result[nodes[i].Id] = new MapPoint(tx * Tile, ty * Tile);
             }
             return result;
+        }
+        static long LandKey(int x, int y) => ((long)x << 32) ^ (uint)y;
+        static void AddLand(HashSet<long> set, int cx, int cy, int r)
+        {
+            for (int x = -r; x <= r; x++)
+            for (int y = -r; y <= r; y++)
+                if (x * x + y * y <= r * r + r) set.Add(LandKey(cx + x, cy + y));
+        }
+        // 円盤が既存の土地と重なるか、上下左右に接するか。
+        static bool TouchesLand(HashSet<long> set, int cx, int cy, int r)
+        {
+            for (int x = -r; x <= r; x++)
+            for (int y = -r; y <= r; y++)
+                if (x * x + y * y <= r * r + r)
+                {
+                    int px = cx + x, py = cy + y;
+                    if (set.Contains(LandKey(px, py)) || set.Contains(LandKey(px + 1, py)) || set.Contains(LandKey(px - 1, py))
+                        || set.Contains(LandKey(px, py + 1)) || set.Contains(LandKey(px, py - 1))) return true;
+                }
+            return false;
         }
     }
 }

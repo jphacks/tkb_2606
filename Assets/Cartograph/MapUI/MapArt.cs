@@ -42,11 +42,18 @@ namespace Cartograph.MapUI
             "nature_tree_pine_s", "nature_tree_pine_l", "nature_tree_round_s", "nature_tree_round_l",
         };
         public readonly Sprite[] Nature;
+        // 人物(NPC)。CharacterNames と同じ並び。シートは 32x48 のコマ 4列x4行: 行 = 下・上・左・右の向き、列 = 歩きの 4 コマ。足元が基準。読めなければ空配列。
+        public const int CharacterFrames = 4;
+        public enum Facing { Down, Up, Left, Right }
+        public static readonly string[] CharacterNames = { "girl_twintail", "boy_short", "girl_long_black", "boy_cap", "woman_apron", "man_farmer", "elder_man", "elder_woman" };
+        public readonly Sprite[][] Characters;
 
         MapArt()
         {
             Nature = new Sprite[NatureNames.Length];
             for (int i = 0; i < NatureNames.Length; i++) Nature[i] = Single("Nature/" + NatureNames[i]);
+            Characters = new Sprite[CharacterNames.Length][];
+            for (int i = 0; i < CharacterNames.Length; i++) Characters[i] = Load("Characters/npc_" + CharacterNames[i]) ?? new Sprite[0];
             Hut = Single("Buildings/building_hut_1x1");
             House = Single("Buildings/building_house_2x2");
             Lodge3x2 = Single("Buildings/building_lodge_3x2");
@@ -68,7 +75,6 @@ namespace Cartograph.MapUI
             Marks = new[] { Single("Marks/mark_noreason"), Single("Marks/mark_broken"), Single("Marks/mark_isolated") };
             Collapse = Load("Collapse/anim_wall_collapse");
             PathPlain = Load("Tiles/Path/path_plain");
-            BuildThinPath();
             OverlayPremise = Load("Tiles/Path/overlay_premise");
             OverlayContrast = Load("Tiles/Path/overlay_contrast");
             OverlayExample = Load("Tiles/Path/overlay_example");
@@ -102,30 +108,6 @@ namespace Cartograph.MapUI
         {
             int underscore = name.LastIndexOf('_');
             return underscore >= 0 && int.TryParse(name.Substring(underscore + 1), out int n) ? n : 0;
-        }
-
-        // 道の絵は、道のマス 1 つ(32px)の中の幅 20px で描かれている。道を半分の太さ(10px)にするため、
-        // 十字・縦・横のマスの絵から、中央の正方形と上右下左の腕だけを切り出して、道のマスを組み立てる。
-        public const int PathCore = 10, PathInset = 11;        // 太さと、マスの端から道までの距離(32 = 11 + 10 + 11)
-        public Sprite PathCenter;
-        public Sprite[] PathArm = new Sprite[4];                // 0 上 1 右 2 下 3 左
-        public bool HasThinPaths => PathCenter != null && PathArm[0] != null && PathArm[1] != null && PathArm[2] != null && PathArm[3] != null;
-        void BuildThinPath()
-        {
-            if (PathPlain.Length < 16) return;
-            // 向きの並び: 上=1 右=2 下=4 左=8。縦は 5、横は 10、十字は 15。
-            Sprite Part(Sprite whole, float x, float y, float w, float h)
-            {
-                var r = whole.rect;
-                return Sprite.Create(whole.texture, new Rect(r.x + x, r.y + y, w, h), new Vector2(0.5f, 0.5f), whole.pixelsPerUnit, 0, SpriteMeshType.FullRect);
-            }
-            int a = PathInset, c = PathCore, edge = 32 - PathInset;   // 11, 10, 21
-            // テクスチャの y は下から数える。
-            PathCenter = Part(PathPlain[15], a, a, c, c);
-            PathArm[0] = Part(PathPlain[5], a, edge, c, a);   // 上
-            PathArm[2] = Part(PathPlain[5], a, 0, c, a);      // 下
-            PathArm[1] = Part(PathPlain[10], edge, a, a, c);  // 右
-            PathArm[3] = Part(PathPlain[10], 0, a, a, c);     // 左
         }
 
         public bool HasTiles => Wall.Length > 0 && Ground.Length > 0 && Border.Length >= 16;

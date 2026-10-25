@@ -56,19 +56,59 @@ namespace Cartograph.EditorUI.Tests
         }
 
         [Test]
-        public void ItemsStayOnFreeLandCellsAndNeverOverlap()
+        public void ItemsStayOffPathsAndFlagCells()
         {
             var nodes = new[] { Node("a", 0, 0, 3000), Node("b", 4, 0, 3000) };
-            var occupancy = MapOccupancy.ForNodes(nodes.Select(n => n.Cell), new[] { MapCell.Key(2, 2), MapCell.Key(-2, 1) });
+            var paths = new[] { MapCell.Key(2, 2), MapCell.Key(-2, 1) };
+            var occupancy = MapOccupancy.ForNodes(nodes.Select(n => n.Cell), paths);
             var items = Place(nodes, null, occupancy);
-            var seen = new HashSet<long>();
+            Assert.That(items, Is.Not.Empty);
             foreach (var item in items)
             {
-                Assert.That(seen.Add(MapCell.Key(item.X, item.Y)), Is.True, "overlap");
                 foreach (var n in nodes) Assert.That(Math.Abs(item.X - MapCell.X(n.Cell)) <= 1 && Math.Abs(item.Y - MapCell.Y(n.Cell)) <= 1, Is.False, "on a flag cell");
-                Assert.That(occupancy.Kind(item.X, item.Y), Is.EqualTo(OccupyKind.Nature));
+                // 描く位置が、道のマス(中心±0.5)の中に入らない。
+                foreach (var p in paths)
+                    Assert.That(Math.Abs(item.WorldX - MapCell.X(p)) < 0.5f && Math.Abs(item.WorldY - MapCell.Y(p)) < 0.5f, Is.False, "on a path");
             }
-            Assert.That(items.Any(i => i.X == 2 && i.Y == 2 || i.X == -2 && i.Y == 1), Is.False, "on a path");
+            Assert.That(items.Any(i => i.X == 2 && i.Y == 2 || i.X == -2 && i.Y == 1), Is.False, "on a path cell");
+        }
+
+        [Test]
+        public void ItemsGetSubTileOffsetsThatAreDeterministicAndBounded()
+        {
+            var nodes = new[] { Node("a", 0, 0, 3000), Node("b", 20, 0, 3000) };
+            var first = Place(nodes);
+            Assert.That(first.Any(i => i.OffsetX != 0f || i.OffsetY != 0f), Is.True, "offsets are used");
+            Assert.That(first.Select(i => i.OffsetX).Distinct().Count(), Is.GreaterThan(10), "offsets vary");
+            foreach (var item in first)
+            {
+                Assert.That(Math.Abs(item.OffsetX), Is.LessThanOrEqualTo(0.5f));
+                Assert.That(Math.Abs(item.OffsetY), Is.LessThanOrEqualTo(0.5f));
+            }
+            var again = Place(nodes.Reverse());
+            Assert.That(again.Count, Is.EqualTo(first.Count));
+            Assert.That(string.Join(";", again.Select(i => i.Kind + "@" + i.WorldX + "," + i.WorldY)),
+                Is.EqualTo(string.Join(";", first.Select(i => i.Kind + "@" + i.WorldX + "," + i.WorldY))));
+            Assert.That(NaturePlacer.OffsetFor("a", 3, 4), Is.EqualTo(NaturePlacer.OffsetFor("a", 3, 4)));
+        }
+
+        [Test]
+        public void MoreTextKeepsTheOffsetsOfExistingItems()
+        {
+            var fewer = Place(new[] { Node("a", 0, 0, 100) });
+            var more = Place(new[] { Node("a", 0, 0, 190) });
+            foreach (var item in fewer)
+                Assert.That(more.Any(m => m.Kind == item.Kind && m.X == item.X && m.Y == item.Y && m.OffsetX == item.OffsetX && m.OffsetY == item.OffsetY), Is.True);
+        }
+
+        [Test]
+        public void NaturePlacementDoesNotReserveOccupancy()
+        {
+            var nodes = new[] { Node("a", 0, 0, 3000) };
+            var occupancy = MapOccupancy.ForNodes(nodes.Select(n => n.Cell), null);
+            var items = Place(nodes, null, occupancy);
+            Assert.That(items, Is.Not.Empty);
+            foreach (var item in items) Assert.That(occupancy.IsFree(item.X, item.Y), Is.True);
         }
 
         [Test]
