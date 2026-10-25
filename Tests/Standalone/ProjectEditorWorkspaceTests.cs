@@ -80,6 +80,19 @@ namespace Cartograph.IntegrationTests
             Assert.That(env.History("町/名前"), Does.Contain("insert"));
         }
         [Test]
+        public async Task ChoosingTheNotesFolderOpensTheProjectAboveIt()
+        {
+            var env = new Env(); env.PutNote("A", "本文");
+            env.Fs.WriteAllTextAtomic(Path.Combine(env.Paths.Root, ".cartograph", "book-title.txt"), "題");
+            var ws = Workspace(env);
+            await ws.OpenProject(Path.Combine(env.Paths.Root, "notes"));
+            Assert.That(ws.ProjectRoot, Is.EqualTo(env.Paths.Root));
+            Assert.That(ws.Documents.Select(d => d.id), Is.EqualTo(new[] { "A" }));
+            // 本当にルートを選んだときは、そのまま開く。
+            await ws.OpenProject(env.Paths.Root);
+            Assert.That(ws.ProjectRoot, Is.EqualTo(env.Paths.Root));
+        }
+        [Test]
         public async Task MoveDocumentCarriesBodyAndRewritesLinks()
         {
             var env = new Env(); env.PutNote("町/A", "本文"); env.PutNote("B", "[[町/A]]");

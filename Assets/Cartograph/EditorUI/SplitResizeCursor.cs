@@ -1,19 +1,23 @@
+using System.Collections.Generic;
 using UnityEngine;
 using UnityEngine.UIElements;
 
 namespace Cartograph.EditorUI
 {
     /// <summary>
-    /// 分割のつまみの上と、つまみをドラッグしている間、マウスカーソルを「↔」にする。
+    /// 分割のつまみの上と、つまみをドラッグしている間だけ、マウスカーソルを「↔」にする。
     /// USS の cursor は実行時の画面では効かないため、Cursor.SetCursor で絵を差し替える。
+    /// 入った/出たのイベントには頼らず、画面全体のポインタの動きのたびに「いまつまみの上か」を求め直す
+    /// (UI が一時的に無効になる、画面の外へ出る、などでイベントを取りこぼしても、↔ が残らない)。
     /// </summary>
     public sealed class SplitResizeCursor
     {
         private const int Size = 32;
         private const float GrabWidth = 10f;
         private static Texture2D texture;
-        private readonly VisualElement handle;
-        private bool hovering, dragging;
+        private readonly VisualElement root;
+        private readonly List<VisualElement> handles = new List<VisualElement>();
+        private bool dragging, shown;
 
         /// <summary>この分割自身のつまみ。入れ子の分割のつまみを拾わないよう、直下の子だけを見る。</summary>
         public static VisualElement HandleOf(TwoPaneSplitView split)
@@ -23,35 +27,45 @@ namespace Cartograph.EditorUI
             return null;
         }
 
-        public static void Attach(TwoPaneSplitView split, VisualElement root)
+        public SplitResizeCursor(VisualElement root)
+        {
+            this.root = root;
+            root.RegisterCallback<PointerMoveEvent>(evt =>
+            {
+                // ボタンが離されているのにドラッグ中のままなら、取りこぼしなので終わらせる。
+                if (dragging && evt.pressedButtons == 0) dragging = false;
+                Update(evt.position);
+            }, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerUpEvent>(evt => { dragging = false; Update(evt.position); }, TrickleDown.TrickleDown);
+            root.RegisterCallback<PointerLeaveEvent>(_ => { dragging = false; Show(false); });
+            root.RegisterCallback<DetachFromPanelEvent>(_ => { dragging = false; Show(false); });
+        }
+
+        public void Add(TwoPaneSplitView split)
         {
             var handle = HandleOf(split);
             if (handle == null) return;
             // 既定のつまみは 1px ほどで、つかみにくい。線の位置は変えずに、見えない当たり判定だけ広げる。
             handle.style.width = GrabWidth;
-            handle.style.backgroundColor = Color.clear;
             handle.style.translate = new Translate(-GrabWidth / 2f, 0);
-            new SplitResizeCursor(handle, root);
+            handle.style.backgroundColor = Color.clear;
+            handle.RegisterCallback<PointerDownEvent>(evt => { if (evt.button == 0) { dragging = true; Show(true); } }, TrickleDown.TrickleDown);
+            handles.Add(handle);
         }
 
-        private SplitResizeCursor(VisualElement handle, VisualElement root)
+        private void Update(Vector2 position)
         {
-            this.handle = handle;
-            handle.RegisterCallback<PointerEnterEvent>(_ => { hovering = true; Apply(); });
-            handle.RegisterCallback<PointerLeaveEvent>(_ => { hovering = false; Apply(); });
-            handle.RegisterCallback<PointerDownEvent>(_ => { dragging = true; Apply(); }, TrickleDown.TrickleDown);
-            // つまみを離した場所が、つまみの上でなければ、カーソルを元に戻す。
-            root.RegisterCallback<PointerUpEvent>(evt =>
-            {
-                if (!dragging) return;
-                dragging = false; hovering = handle.worldBound.Contains(evt.position); Apply();
-            }, TrickleDown.TrickleDown);
-            handle.RegisterCallback<DetachFromPanelEvent>(_ => { hovering = dragging = false; Apply(); });
+            bool over = dragging;
+            for (int i = 0; i < handles.Count && !over; i++)
+                over = handles[i].panel != null && handles[i].worldBound.Contains(position);
+            Show(over);
         }
 
-        private void Apply()
+        private void Show(bool on)
         {
-            if (hovering || dragging) UnityEngine.Cursor.SetCursor(Texture(), new Vector2(Size / 2f, Size / 2f), CursorMode.Auto);
+            if (on == shown) return;
+            shown = on;
+            if (on) UnityEngine.Cursor.SetCursor(Texture(), new Vector2(Size / 2f, Size / 2f), CursorMode.Auto);
             else UnityEngine.Cursor.SetCursor(null, Vector2.zero, CursorMode.Auto);
         }
 

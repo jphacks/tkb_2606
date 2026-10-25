@@ -157,9 +157,10 @@ namespace Cartograph.EditorUI
             rightWorkspace.style.minWidth = 420; rightWorkspace.style.flexGrow = 1; contentSplit.Add(rightWorkspace);
             // つまみは、2 つのペインが入ってから作られる。
             RememberRatio(contentSplit, mapPanel, MapRatioKey);
-            SplitResizeCursor.Attach(contentSplit, root);
+            var resizeCursor = new SplitResizeCursor(root);
+            resizeCursor.Add(contentSplit);
             RememberRatio(main, sidebar, IndexRatioKey);
-            SplitResizeCursor.Attach(main, root);
+            resizeCursor.Add(main);
             var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
             var workbench = Row(rightWorkspace); workbench.AddToClassList("workbench");
             workbench.style.flexGrow = 1; workbench.style.minHeight = 0;

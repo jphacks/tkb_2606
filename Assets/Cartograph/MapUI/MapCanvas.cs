@@ -746,7 +746,7 @@ namespace Cartograph.MapUI
         }
         // 土地のマスの絵(崩れる演出を除く)。壁との境目や道の向きは、解析のたびに一度だけ決めて持つ。
         // 縁・道の絵は壁の部分が透けているので、下に壁を敷く(Backed)。
-        private struct TerrainCell { public Sprite Tile, Overlay; public bool Path, Backed; }
+        private struct TerrainCell { public Sprite Tile, Overlay; public bool Path, Backed; public int Open; }
         private readonly Dictionary<long, TerrainCell> terrainCells = new Dictionary<long, TerrainCell>();
         private void BuildTerrainCells(MapArt art)
         {
@@ -756,7 +756,7 @@ namespace Cartograph.MapUI
             {
                 int x = (int)(key >> 32), y = (int)(uint)key;
                 if (art.HasPaths && pathMask.TryGetValue(key, out int open))
-                { terrainCells[key] = new TerrainCell { Tile = art.PathPlain[open], Overlay = PathOverlay(key, open, art), Path = true, Backed = true }; continue; }
+                { terrainCells[key] = new TerrainCell { Tile = art.PathPlain[open], Overlay = PathOverlay(key, open, art), Path = true, Backed = true, Open = open }; continue; }
                 // 壁に接する辺の組み合わせ: 上=1 右=2 下=4 左=8。縁なしの時だけ、斜めが壁の角を調べる。
                 int mask = (land.Contains(Key(x, y - 1)) ? 0 : 1) | (land.Contains(Key(x + 1, y)) ? 0 : 2)
                     | (land.Contains(Key(x, y + 1)) ? 0 : 4) | (land.Contains(Key(x - 1, y)) ? 0 : 8);
@@ -790,8 +790,31 @@ namespace Cartograph.MapUI
                 }
             }
             if (cell.Backed) AddTile(sprites, x, y, wall);
+            if (cell.Path && art.HasThinPaths)
+            {
+                // 道は半分の太さ: 中央の正方形と、開いている向きの腕だけを描く。
+                const int a = MapArt.PathInset, c = MapArt.PathCore, edge = 32 - MapArt.PathInset;
+                AddTilePiece(sprites, x, y, art.PathCenter, a, a, c, c);
+                if ((cell.Open & 1) != 0) AddTilePiece(sprites, x, y, art.PathArm[0], a, 0, c, a);
+                if ((cell.Open & 2) != 0) AddTilePiece(sprites, x, y, art.PathArm[1], edge, a, a, c);
+                if ((cell.Open & 4) != 0) AddTilePiece(sprites, x, y, art.PathArm[2], a, edge, c, a);
+                if ((cell.Open & 8) != 0) AddTilePiece(sprites, x, y, art.PathArm[3], 0, a, a, c);
+                // 種別の重ね絵も、半分の大きさでマスの中央に置く。
+                if (cell.Overlay != null) AddTilePiece(overlays, x, y, cell.Overlay, 8, 8, 16, 16);
+                return;
+            }
             AddTile(sprites, x, y, cell.Tile);
             if (cell.Overlay != null) AddTile(overlays, x, y, cell.Overlay);
+        }
+        // マスの一部分(左上からの位置と大きさを、マス = 32 として指定)に絵を置く。隣と辺をそろえるのは AddTile と同じ。
+        private void AddTilePiece(List<SpriteDraw> sprites, int cx, int cy, Sprite sprite, float x, float y, float w, float h)
+        {
+            if (sprite == null) return;
+            float t = MapLayout.Tile, k = t / 32f, left = cx * t - t / 2 + x * k, top = cy * t - t / 2 + y * k;
+            var a = viewport.Screen(new MapPoint(left, top));
+            var b = viewport.Screen(new MapPoint(left + w * k, top + h * k));
+            var rect = Rect.MinMaxRect(Mathf.Round(a.X), Mathf.Round(a.Y), Mathf.Round(b.X), Mathf.Round(b.Y));
+            if (rect.Overlaps(viewRect)) sprites.Add(new SpriteDraw(rect, sprite));
         }
         // 種別の重ね絵は、まっすぐ(縦5・横10)のマスだけに載せる。
         private Sprite PathOverlay(long key, int open, MapArt art)

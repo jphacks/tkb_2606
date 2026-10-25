@@ -170,6 +170,7 @@ namespace Cartograph.EditorUI
         public async Task OpenProject(string absoluteFolderPath)
         {
             await FlushSave();
+            absoluteFolderPath = ProjectRootResolver.Resolve(absoluteFolderPath, fileSystem ?? new DiskFileSystem());
             var next = ProjectWorkspace.Open(absoluteFolderPath, fileSystem, options);
             string nextTitle = (fileSystem ?? new DiskFileSystem()).ReadAllText(Path.Combine(next.Root, ".cartograph", "book-title.txt"));
             if (project != null)
