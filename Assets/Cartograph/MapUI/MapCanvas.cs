@@ -18,14 +18,10 @@ namespace Cartograph.MapUI
         // 目印の中心の、拠点からの世界座標でのずれ(旗の右上)。
         private static readonly Vector2 MarkOffset = new Vector2(14, -18);
         private readonly MapViewport viewport = new MapViewport();
+        private Rect viewRect;
         private readonly MapTouchGesture touchGesture = new MapTouchGesture();
         private readonly VisualElement labels = new VisualElement { pickingMode = PickingMode.Ignore };
         private readonly List<Label> labelPool = new List<Label>();
-        private readonly Dictionary<Emotion, Color32> flowerColors = new Dictionary<Emotion, Color32>
-        {
-            { Emotion.Joy, new Color32(245, 207, 91, 255) }, { Emotion.Anger, new Color32(237, 109, 119, 255) },
-            { Emotion.Sadness, new Color32(111, 168, 233, 255) }, { Emotion.Delight, new Color32(246, 164, 87, 255) }
-        };
         private MapSnapshot snapshot;
         private Dictionary<string, MapPoint> positions = new Dictionary<string, MapPoint>();
         private readonly HashSet<long> land = new HashSet<long>();
@@ -36,6 +32,10 @@ namespace Cartograph.MapUI
         // 壁から土地に変わったマスと、崩れ始めたコマ番号。
         private readonly Dictionary<long, int> collapsing = new Dictionary<long, int>();
         private readonly Dictionary<string, MapNode> nodes = new Dictionary<string, MapNode>();
+        // 前の解析で置いた建物と、いま建ち始めの建物(建ち始めのコマ番号)。
+        private HashSet<string> placedKeys = new HashSet<string>(StringComparer.Ordinal);
+        private readonly Dictionary<string, int> appearing = new Dictionary<string, int>(StringComparer.Ordinal);
+        private static string BuildingKey(MapBuilding building) => building.File + "|" + building.Node;
         private string selected, lastClick;
         private float lastClickAt;
         private Vector2 pointerStart, previousPointer;
@@ -43,9 +43,34 @@ namespace Cartograph.MapUI
         public event Action<MapNode> NodeSelected;
         public event Action<MapNode> NodeDoubleClicked;
         public event Action<string> MarkSelected;
+        public event Action<MapBuilding, MapNode> BuildingSelected;
+        public event Action<MapBuilding, MapNode> BuildingDoubleClicked;
+        // 拠点の位置が、最後に通知した(または読み込んだ)ものから変わった時。保存のために使う。
+        public event Action<IReadOnlyDictionary<string, MapPoint>> LayoutChanged;
+        private Dictionary<string, MapPoint> reportedLayout = new Dictionary<string, MapPoint>();
+        // 置いた建物。SetSnapshot で、道のマスが決まったあとに決める。
+        private readonly List<BuildingPlacement> placements = new List<BuildingPlacement>();
+        // 置いた自然物(解析のたびに一度だけ決める)。描く時は画面内のものだけ拾う。
+        private readonly List<NatureItem> natureItems = new List<NatureItem>();
+        private readonly Label hoverLabel = new Label { pickingMode = PickingMode.Ignore, enableRichText = false };
+        // エディタのカーソルがある拠点。クリックで選んだ拠点(selected)とは別に、脈打つ枠で示す。
+        private string editorNode;
+        // マップを操作している間と直後は、自動スクロールを止める。
+        private readonly MapInputGate inputGate = new MapInputGate(3f);
+        private MapPanTween panTween;
+        private float panStartedAt;
+        private IVisualElementScheduledItem panJob;
+        private const float PanSeconds = 0.25f;
+        // 自動スクロールの間は、新しい土地が崩れ始めるのを待つコマ数(140ms 単位)。
+        private const int PanWaitFrames = 2;
 
         public MapCanvas()
         {
+            hoverLabel.style.position = Position.Absolute; hoverLabel.style.fontSize = 11; hoverLabel.style.display = DisplayStyle.None;
+            hoverLabel.style.backgroundColor = (Color)new Color32(12, 22, 36, 230);
+            hoverLabel.style.color = (Color)new Color32(236, 226, 190, 255);
+            hoverLabel.style.paddingLeft = hoverLabel.style.paddingRight = 4;
+            Add(hoverLabel);
             name = "knowledge-map"; style.flexGrow = 1; style.minHeight = 200;
             style.overflow = Overflow.Hidden; style.position = Position.Relative;
             labels.style.position = Position.Absolute; labels.style.left = labels.style.top = 0;
@@ -58,12 +83,15 @@ namespace Cartograph.MapUI
                 int length = MapArt.Instance.Collapse.Length;
                 if (collapsing.Count > 0)
                     foreach (long key in collapsing.Where(p => frame - p.Value >= length).Select(p => p.Key).ToList()) collapsing.Remove(key);
-                if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || collapsing.Count > 0) MarkDirtyRepaint();
+                if (appearing.Count > 0)
+                    foreach (string key in appearing.Where(p => frame - p.Value >= BuildingAppearance.Frames).Select(p => p.Key).ToList()) appearing.Remove(key);
+                if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || collapsing.Count > 0 || appearing.Count > 0) MarkDirtyRepaint();
             }).Every(140);
             RegisterCallback<GeometryChangedEvent>(_ =>
             { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
             RegisterCallback<PointerDownEvent>(evt =>
             {
+                UserTouched();
                 if (evt.pointerType == UnityEngine.UIElements.PointerType.touch)
                 {
                     dragging = false;
@@ -77,12 +105,13 @@ namespace Cartograph.MapUI
             });
             RegisterCallback<PointerMoveEvent>(evt =>
             {
+                if (dragging || touchGesture.Count > 0) UserTouched();
                 if (touchGesture.Move(evt.pointerId, new MapPoint(evt.localPosition.x, evt.localPosition.y), viewport))
                 { Repaint(); evt.StopPropagation(); return; }
-                if (!dragging) return;
+                if (!dragging) { UpdateHover(evt.localPosition); return; }
                 Vector2 point = evt.localPosition;
                 if ((point - pointerStart).sqrMagnitude > 25) moved = true;
-                if (moved) { viewport.Pan(point.x - previousPointer.x, point.y - previousPointer.y); Repaint(); }
+                if (moved) { HideHover(); viewport.Pan(point.x - previousPointer.x, point.y - previousPointer.y); Repaint(); }
                 previousPointer = point;
             });
             RegisterCallback<PointerUpEvent>(evt =>
@@ -99,12 +128,14 @@ namespace Cartograph.MapUI
                 if (!moved) SelectAt(evt.localPosition);
                 evt.StopPropagation();
             });
+            RegisterCallback<PointerLeaveEvent>(_ => HideHover());
             RegisterCallback<PointerCaptureOutEvent>(evt => { touchGesture.Up(evt.pointerId, true); dragging = false; });
             RegisterCallback<PointerCancelEvent>(evt =>
             { touchGesture.Up(evt.pointerId, true); this.ReleasePointer(evt.pointerId); dragging = false; });
             RegisterCallback<DetachFromPanelEvent>(_ => { touchGesture.Clear(); dragging = false; });
             RegisterCallback<WheelEvent>(evt =>
             {
+                UserTouched();
                 viewport.Zoom(Mathf.Exp(-evt.delta.y * 0.08f), new MapPoint(evt.localMousePosition.x, evt.localMousePosition.y));
                 Repaint(); evt.StopPropagation();
             });
@@ -114,30 +145,74 @@ namespace Cartograph.MapUI
         {
             bool firstData = snapshot == null || snapshot.Nodes.Count == 0;
             snapshot = value; lastClick = null;
+            // 見出しの書き換えで ID が変わった拠点は、前の拠点として扱う(位置・選択・カーソルの拠点を引き継ぎ、追加の演出は出さない)。
+            var renamed = value == null ? new Dictionary<string, string>() : MapRename.Match(nodes.Values, value.Nodes);
+            var oldIds = new HashSet<string>(nodes.Keys, StringComparer.Ordinal);
+            foreach (var pair in renamed)
+            {
+                if (positions.TryGetValue(pair.Value, out var kept)) positions[pair.Key] = kept;
+                if (selected == pair.Value) selected = pair.Key;
+                if (editorNode == pair.Value) editorNode = pair.Key;
+            }
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
+            if (value == null || !value.Nodes.Any(n => n.Id == editorNode)) editorNode = null;
             var before = new HashSet<long>(land);
-            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear();
+            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); natureItems.Clear(); HideHover();
+            long setStart = MapProfile.Start(), setPhase = setStart;
             positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
+            MapProfile.Stop("set.solve", setPhase); setPhase = MapProfile.Start();
+            var newNodeLand = new HashSet<long>(); MapNode firstAdded = null;
+            // 前の地図と共通の拠点が 1 つもないとき(表示サンプルとの切り替えなど)は、増分ではなく別の地図として扱う。
+            bool incremental = before.Count > 0 && value != null && value.Nodes.Any(n => oldIds.Contains(n.Id) || renamed.ContainsKey(n.Id));
             if (value != null)
             {
                 foreach (var node in value.Nodes)
                 {
                     nodes.Add(node.Id, node);
+                    bool added = incremental && !oldIds.Contains(node.Id) && !renamed.ContainsKey(node.Id);
+                    if (added && firstAdded == null) firstAdded = node;
                     var point = positions[node.Id]; int radius = MapLayout.LandRadius(node.TypedChars);
                     int cx = (int)(point.X / MapLayout.Tile), cy = (int)(point.Y / MapLayout.Tile);
                     for (int x = -radius; x <= radius; x++)
                     for (int y = -radius; y <= radius; y++)
                         if (x * x + y * y <= radius * radius + radius)
-                            PutLand(cx + x, cy + y);
+                        { PutLand(cx + x, cy + y); if (added) newNodeLand.Add(Key(cx + x, cy + y)); }
                 }
+                MapProfile.Stop("set.land", setPhase); setPhase = MapProfile.Start();
                 foreach (var edge in value.Roads) Carve(edge, positions[edge.From], positions[edge.To]);
-                if (before.Count > 0)
-                    foreach (long key in land) if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame;
+                MapProfile.Stop("set.carve", setPhase); setPhase = MapProfile.Start();
+                PlaceObjects(value);
+                MapProfile.Stop("set.place", setPhase); setPhase = MapProfile.Start();
+                PrepareDrawCaches(value);
+                MapProfile.Stop("set.caches", setPhase);
+                // 壁が崩れるのは、新しく現れた見出しの土地だけ。文字が増えて土地の半径が広がっただけでは崩さない。
+                // 新しい拠点が画面の外なら、そこへスクロールし終わってから崩れ始める。
+                int wait = firstAdded != null && contentRect.width > 1 && TryAutoScroll(firstAdded.Id) ? PanWaitFrames : 0;
+                foreach (long key in newNodeLand)
+                    if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame + wait;
+                // 新しく建つ建物は、下から伸びる。
+                var keys = placements.Select(p => BuildingKey(p.Building)).ToList();
+                foreach (var key in BuildingAppearance.NewKeys(placedKeys, keys, incremental)) appearing[key] = frame + wait;
+                placedKeys = new HashSet<string>(keys, StringComparer.Ordinal);
+                foreach (var key in appearing.Keys.Where(k => !placedKeys.Contains(k)).ToList()) appearing.Remove(key);
             }
+            else { placedKeys.Clear(); appearing.Clear(); }
             foreach (long key in collapsing.Keys.Where(k => !land.Contains(k)).ToList()) collapsing.Remove(key);
+            if (value == null) { flowerDraws.Clear(); flagDraws.Clear(); townLabels.Clear(); terrainCells.Clear(); }
+            overviewDirty = true;
             pendingFit = firstData;
             if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
+            MapProfile.Stop("set.total", setStart);
             Repaint();
+            if (value != null && !MapLayoutFile.Same(positions, reportedLayout))
+            { reportedLayout = new Dictionary<string, MapPoint>(positions); LayoutChanged?.Invoke(reportedLayout); }
+        }
+        // 保存してあった拠点の位置を、最初の解析結果が来る前に渡す。次の SetSnapshot で、その位置に固定される。
+        public void SetSavedLayout(IReadOnlyDictionary<string, MapPoint> saved)
+        {
+            if (snapshot != null && snapshot.Nodes.Count > 0) return;
+            positions = saved == null ? new Dictionary<string, MapPoint>() : new Dictionary<string, MapPoint>(saved);
+            reportedLayout = new Dictionary<string, MapPoint>(positions);
         }
         private static long Key(int x, int y) => ((long)x << 32) | (uint)y;
         private void PutLand(int x, int y) => land.Add(Key(x, y));
@@ -175,14 +250,137 @@ namespace Cartograph.MapUI
                 if (IsPath(i) && !edge.Auto && edge.Kind != RoadKind.Unspecified) pathKind[from] = new KeyValuePair<RoadKind, int>(edge.Kind, dir);
             }
         }
+        // 解析のたびに一度だけ求めておく、毎フレームの描画で使う値(文字列のハッシュや並べ替えを、毎フレームしないため)。
+        private struct FlowerDraw { public MapFlower Flower; public int Hash; public float X, Bottom; }
+        private struct FlagDraw { public float X, Bottom; public Sprite[] Frames; public MapPoint At; }
+        private struct TownLabel { public string Name; public MapPoint Anchor; }
+        private readonly List<FlowerDraw> flowerDraws = new List<FlowerDraw>();
+        private readonly List<FlagDraw> flagDraws = new List<FlagDraw>();
+        private readonly List<TownLabel> townLabels = new List<TownLabel>();
+        private void PrepareDrawCaches(MapSnapshot value)
+        {
+            var art = MapArt.Instance;
+            flowerDraws.Clear(); flagDraws.Clear(); townLabels.Clear();
+            BuildTerrainCells(art);
+            foreach (var flower in value.Flowers)
+            {
+                if (nodes[flower.Node].TypedChars == 0) continue;
+                int hash = MapLayout.StableHash(flower.Node + ":" + flower.Line); var p = positions[flower.Node];
+                // 拠点のマスと、そのまわり1マスのどこかに咲かせる。
+                flowerDraws.Add(new FlowerDraw { Flower = flower, Hash = hash, X = p.X + (hash % 3 - 1) * MapLayout.Tile,
+                    Bottom = p.Y + (hash / 3 % 3 - 1) * MapLayout.Tile + MapLayout.Tile / 2 });
+            }
+            foreach (var node in value.Nodes.OrderBy(n => positions[n.Id].Y))
+            {
+                var at = positions[node.Id];
+                flagDraws.Add(new FlagDraw { X = at.X, Bottom = at.Y + MapLayout.Tile / 2, Frames = art.FlagFor(MapLayout.StableHash(node.Town)), At = at });
+            }
+            foreach (var town in value.Nodes.GroupBy(n => n.Town).Take(16))
+            {
+                var points = town.Select(n => positions[n.Id]).ToArray();
+                townLabels.Add(new TownLabel { Name = town.Key.Length == 0 ? "ノート" : town.Key,
+                    Anchor = new MapPoint(points.Average(point => point.X), points.Min(point => point.Y) - 65) });
+            }
+        }
+        // 描ける絵のある建物だけを、旗・花・道を避けて置く。建物のマスは土地にして、足りない土地を広げる。
+        // 占有マップに、旗・花・目印(拠点の中心 3x3)、道、建物、自然物の順に予約していく。先に予約したものが優先される。
+        private void PlaceObjects(MapSnapshot value)
+        {
+            var art = MapArt.Instance;
+            var cells = new Dictionary<string, long>();
+            foreach (var node in value.Nodes)
+            { var p = positions[node.Id]; cells[node.Id] = MapCell.Key((int)(p.X / MapLayout.Tile), (int)(p.Y / MapLayout.Tile)); }
+            var occupancy = MapOccupancy.ForNodes(cells.Values, pathMask.Keys);
+
+            var settings = BuildingConfig.Settings;
+            var drawable = value.Buildings.Where(b => HasArt(BuildingSizing.Measure(b, settings), b, art));
+            foreach (var placement in BuildingPlacer.PlaceOn(drawable, cells, occupancy, settings))
+            {
+                placements.Add(placement);
+                for (int dx = 0; dx < placement.Size.Width; dx++)
+                for (int dy = 0; dy < placement.Size.Depth; dy++)
+                    PutLand(placement.X + dx, placement.Y + dy);
+            }
+
+            var natureNodes = value.Nodes.Select(n => new NatureNode(n.Id, cells[n.Id], n.TypedChars, n.Level, n.Town));
+            foreach (var item in NaturePlacer.Place(natureNodes, value.Roads, occupancy, NatureConfig.Settings))
+                if (art.Nature[(int)item.Kind] != null) natureItems.Add(item);
+        }
+        private static bool HasArt(BuildingSize size, MapBuilding building, MapArt art)
+            => size.Shape == BuildingShape.Tower ? art.TowerFor(size.Width, MapLayout.StableHash(building.File)) != null : art.Fixed(size.Shape) != null;
+        // 建物が地図上で占める範囲(世界座標)。ビルは地面の1段より上へ伸びる。
+        private static Rect BuildingWorldRect(BuildingPlacement p)
+        {
+            float tile = MapLayout.Tile, width = p.Size.Width * tile;
+            float height = (p.Size.Shape == BuildingShape.Tower ? p.Size.Floors + 2 : p.Size.Depth) * tile;
+            float bottom = (p.Y + p.Size.Depth - 1) * tile + tile / 2;
+            return new Rect((p.X + (p.Size.Width - 1) / 2f) * tile - width / 2, bottom - height, width, height);
+        }
+        // 点にある建物のうち、いちばん手前(下)のものの番号。なければ -1。
+        private int BuildingAt(Vector2 at)
+        {
+            int best = -1; float bestBottom = float.MinValue;
+            for (int i = 0; i < placements.Count; i++)
+            {
+                var w = BuildingWorldRect(placements[i]);
+                var a = viewport.Screen(new MapPoint(w.xMin, w.yMin)); var b = viewport.Screen(new MapPoint(w.xMax, w.yMax));
+                if (at.x < a.X || at.x > b.X || at.y < a.Y || at.y > b.Y || b.Y < bestBottom) continue;
+                best = i; bestBottom = b.Y;
+            }
+            return best;
+        }
+        private void UpdateHover(Vector2 at)
+        {
+            int index = BuildingAt(at);
+            if (index < 0) { HideHover(); return; }
+            var building = placements[index].Building;
+            hoverLabel.text = building.Name + "  ×" + building.Count;
+            hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
+        }
+        private void HideHover() { if (hoverLabel.style.display != DisplayStyle.None) hoverLabel.style.display = DisplayStyle.None; }
+        public float Scale => viewport.Scale;
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
-        public void Zoom(float factor) { viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
+        public void Zoom(float factor) { UserTouched(); viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
+        // ユーザーがマップを操作した。動いている自動スクロールをやめ、しばらく自動スクロールを止める。
+        private void UserTouched()
+        {
+            inputGate.Touch(Time.realtimeSinceStartup);
+            panJob?.Pause(); panTween = null;
+        }
+        // エディタのカーソルがある拠点を示す。別の拠点に移ったときだけ、画面の外ならそこへスクロールする。
+        public void SetEditorFocus(string nodeId)
+        {
+            if (nodeId != null && !nodes.ContainsKey(nodeId)) nodeId = null;
+            if (nodeId == editorNode) return;
+            editorNode = nodeId;
+            if (nodeId != null) TryAutoScroll(nodeId);
+            Repaint();
+        }
+        // 拠点が画面の内側の余白より外にあれば、中央へ滑らかにパンする。操作中・操作の直後は何もしない。
+        private bool TryAutoScroll(string nodeId)
+        {
+            if (!positions.TryGetValue(nodeId, out var world) || contentRect.width <= 1) return false;
+            bool active = dragging || touchGesture.Count > 0;
+            if (!inputGate.IsQuiet(Time.realtimeSinceStartup, active)) return false;
+            var at = viewport.Screen(world);
+            if (!MapAutoScroll.TryDelta(at, contentRect.width, contentRect.height, out float dx, out float dy)) return false;
+            panTween = new MapPanTween(dx, dy, PanSeconds); panStartedAt = Time.realtimeSinceStartup;
+            panJob?.Pause();
+            panJob = schedule.Execute(StepPan); panJob.Every(16);
+            return true;
+        }
+        private void StepPan()
+        {
+            if (panTween == null) { panJob?.Pause(); return; }
+            bool done = panTween.Advance(Time.realtimeSinceStartup - panStartedAt, out float dx, out float dy);
+            viewport.Pan(dx, dy); Repaint();
+            if (done) { panJob?.Pause(); panTween = null; }
+        }
         public void FocusSelection()
         {
             if (selected == null || !positions.TryGetValue(selected, out var p)) { Fit(); return; }
             var at = viewport.Screen(p); viewport.Pan(contentRect.width / 2 - at.X, contentRect.height / 2 - at.Y); Repaint();
         }
-        public void SetFlowerColor(Emotion emotion, Color32 color) { flowerColors[emotion] = color; Repaint(); }
         private void Repaint() { MarkDirtyRepaint(); UpdateLabels(); }
         private void SelectAt(Vector2 at)
         {
@@ -192,6 +390,16 @@ namespace Cartograph.MapUI
                 var p = viewport.Screen(positions[mark.Node]); float s = viewport.Scale, reach = Mathf.Max(10, 12 * s);
                 if ((new Vector2(p.X + MarkOffset.x * s, p.Y + MarkOffset.y * s) - at).sqrMagnitude < reach * reach)
                 { selected = mark.Node; lastClick = null; MarkSelected?.Invoke(mark.Message); Repaint(); return; }
+            }
+            int hit = BuildingAt(at);
+            if (hit >= 0)
+            {
+                var building = placements[hit].Building; string key = "\u0001" + building.File + "|" + building.Node;
+                selected = null; BuildingSelected?.Invoke(building, nodes[building.Node]);
+                if (lastClick == key && Time.realtimeSinceStartup - lastClickAt < 0.35f)
+                { lastClick = null; BuildingDoubleClicked?.Invoke(building, nodes[building.Node]); }
+                else { lastClick = key; lastClickAt = Time.realtimeSinceStartup; }
+                Repaint(); return;
             }
             string closest = null; float distance = 24 * 24;
             foreach (var pair in positions)
@@ -208,25 +416,36 @@ namespace Cartograph.MapUI
         }
         private void UpdateLabels()
         {
+            long profileStart = MapProfile.Start();
+            try { UpdateLabelsCore(); } finally { MapProfile.Stop("labels", profileStart); }
+        }
+        private void UpdateLabelsCore()
+        {
             int count = 0;
             if (snapshot == null)
             { foreach (var label in labelPool) label.style.display = DisplayStyle.None; return; }
-            foreach (var town in snapshot.Nodes.GroupBy(n => n.Town).Take(16))
+            foreach (var town in townLabels)
             {
-                var points = town.Select(n => positions[n.Id]).ToArray();
-                var p = viewport.Screen(new MapPoint(points.Average(point => point.X), points.Min(point => point.Y) - 65));
+                var p = viewport.Screen(town.Anchor);
                 if (p.X < -80 || p.Y < -30 || p.X > contentRect.width || p.Y > contentRect.height) continue;
-                string name = town.Key.Length == 0 ? "ノート" : town.Key;
-                SetLabel(count++, name, p.X, p.Y, true);
+                SetLabel(count++, town.Name, p.X, p.Y, true);
             }
-            foreach (var node in snapshot.Nodes.OrderByDescending(n => n.Id == selected))
+            // 選んだ拠点とカーソルの拠点のラベルを先に出し、数の上限で切られないようにする。
+            void NodeLabel(MapNode node)
             {
-                if (viewport.Scale < 0.3f && node.Id != selected) continue;
                 var p = viewport.Screen(positions[node.Id]);
-                if (p.X < -40 || p.Y < -30 || p.X > contentRect.width + 40 || p.Y > contentRect.height + 30) continue;
-                if (count >= 106) break;
+                if (p.X < -40 || p.Y < -30 || p.X > contentRect.width + 40 || p.Y > contentRect.height + 30) return;
                 SetLabel(count++, node.Title.Length > 22 ? node.Title.Substring(0, 21) + "…" : node.Title, p.X + 9, p.Y + 9, false);
             }
+            if (selected != null && nodes.TryGetValue(selected, out var selectedNode)) NodeLabel(selectedNode);
+            if (editorNode != null && editorNode != selected && nodes.TryGetValue(editorNode, out var editorNodeValue)) NodeLabel(editorNodeValue);
+            if (viewport.Scale >= 0.3f)
+                foreach (var node in snapshot.Nodes)
+                {
+                    if (node.Id == selected || node.Id == editorNode) continue;
+                    if (count >= 106) break;
+                    NodeLabel(node);
+                }
             for (int i = count; i < labelPool.Count; i++) labelPool[i].style.display = DisplayStyle.None;
         }
         private void SetLabel(int index, string text, float x, float y, bool town)
@@ -246,7 +465,7 @@ namespace Cartograph.MapUI
         private void AddQuad(List<Quad> quads, float x, float y, float width, float height, Color32 color)
         {
             var rect = new Rect(x, y, width, height);
-            if (width > 0.2f && height > 0.2f && rect.Overlaps(contentRect)) quads.Add(new Quad(rect, color));
+            if (width > 0.2f && height > 0.2f && rect.Overlaps(viewRect)) quads.Add(new Quad(rect, color));
         }
         private void WorldQuad(List<Quad> quads, float x, float y, float size, Color32 color)
         {
@@ -259,16 +478,23 @@ namespace Cartograph.MapUI
             var quads = new List<Quad>();
             var art = MapArt.Instance; var sprites = new List<SpriteDraw>();
             var overlays = new List<SpriteDraw>();
+            viewRect = contentRect; // contentRect は取るたびに計算されるので、描画の間は 1 回だけ取る
+            long drawStart = MapProfile.Start(), phase = drawStart;
+            overviewVisible = false;
             if (art.HasTiles) AddTerrain(sprites, overlays, quads, art);
             else
             {
                 // 素材が読めない時の代用(色つきの四角)。
-                AddQuad(quads, 0, 0, contentRect.width, contentRect.height, new Color32(13, 24, 38, 255));
+                AddQuad(quads, 0, 0, viewRect.width, viewRect.height, new Color32(13, 24, 38, 255));
                 foreach (long key in land)
                     WorldQuad(quads, (int)(key >> 32) * MapLayout.Tile, (int)(uint)key * MapLayout.Tile, MapLayout.Tile - 0.6f, new Color32(60, 96, 91, 255));
             }
-            Flush(context, quads); quads.Clear(); FlushSprites(context, sprites); sprites.Clear();
+            MapProfile.Stop("draw.terrain.build", phase); phase = MapProfile.Start();
+            Flush(context, quads); quads.Clear();
+            if (overviewVisible) DrawOverview(context);
+            FlushSprites(context, sprites); sprites.Clear();
             FlushSprites(context, overlays); overlays.Clear();
+            MapProfile.Stop("draw.terrain.flush", phase); phase = MapProfile.Start();
             if (snapshot == null) return;
             var painter = context.painter2D;
             // 道の絵が読めない時だけ、線で代用する。
@@ -278,7 +504,7 @@ namespace Cartograph.MapUI
                 var a = viewport.Screen(positions[edge.From]); var b = viewport.Screen(positions[edge.To]);
                 Vector2 from = new Vector2(a.X, a.Y), to = new Vector2(b.X, b.Y);
                 if (!new Rect(Math.Min(a.X, b.X) - 10, Math.Min(a.Y, b.Y) - 10, Math.Abs(a.X - b.X) + 20,
-                    Math.Abs(a.Y - b.Y) + 20).Overlaps(contentRect)) continue;
+                    Math.Abs(a.Y - b.Y) + 20).Overlaps(viewRect)) continue;
                 var direction = (to - from).normalized; var normal = new Vector2(-direction.y, direction.x);
                 painter.lineWidth = edge.Auto ? 1.5f : edge.Kind == RoadKind.Example ? 2 : 3;
                 painter.strokeColor = edge.Auto ? new Color32(131, 172, 166, 220) : new Color32(224, 197, 124, 255);
@@ -309,12 +535,31 @@ namespace Cartograph.MapUI
                 }
             }
             FlushSprites(context, sprites); sprites.Clear();
+            MapProfile.Stop("draw.roads+fog", phase); phase = MapProfile.Start();
             foreach (var node in snapshot.Nodes)
                 if (node.Id == selected)
                 { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 14, p.Y - 14, 28, 28, new Color32(86, 210, 218, 255)); }
+            if (editorNode != null && positions.TryGetValue(editorNode, out var focus))
+            {
+                // 拠点の旗と花の置き場(3x3 マス)を囲む金色の枠。拡大率が低くても見えるよう、最小の大きさを確保し、少しだけ脈打たせる。
+                var p = viewport.Screen(focus); float s = viewport.Scale;
+                float pulse = viewport.Scale >= 0.3f ? Math.Abs(frame % 8 - 4) * 0.012f : 0;
+                float half = Mathf.Max(10, MapLayout.Tile * 1.5f * s * (1 + pulse)), thick = Mathf.Max(2, 3 * s);
+                var gold = new Color32(255, 208, 106, 235);
+                AddQuad(quads, p.X - half, p.Y - half, half * 2, half * 2, new Color32(255, 208, 106, 40));
+                AddQuad(quads, p.X - half, p.Y - half, half * 2, thick, gold); AddQuad(quads, p.X - half, p.Y + half - thick, half * 2, thick, gold);
+                AddQuad(quads, p.X - half, p.Y - half, thick, half * 2, gold); AddQuad(quads, p.X + half - thick, p.Y - half, thick, half * 2, gold);
+            }
             Flush(context, quads); quads.Clear();
-            AddFlowers(sprites, art); FlushSprites(context, sprites); sprites.Clear();
-            AddFlags(sprites, quads, art); FlushSprites(context, sprites); sprites.Clear();
+            // 花・旗・建物は、下の辺が奥(上)にあるものから順に重ねる。
+            var objects = new List<DepthSprite>();
+            long objectsPhase = MapProfile.Start();
+            AddNature(objects, art); MapProfile.Stop("draw.objects.nature", objectsPhase); objectsPhase = MapProfile.Start();
+            AddFlowers(objects, art); MapProfile.Stop("draw.objects.flowers", objectsPhase); objectsPhase = MapProfile.Start();
+            AddFlags(objects, quads, art); MapProfile.Stop("draw.objects.flags", objectsPhase); objectsPhase = MapProfile.Start();
+            AddBuildings(objects, art); MapProfile.Stop("draw.objects.buildings", objectsPhase); objectsPhase = MapProfile.Start();
+            FlushOrdered(context, objects);
+            MapProfile.Stop("draw.objects.flush", objectsPhase);
             foreach (var mark in snapshot.Marks)
             {
                 var at = positions[mark.Node]; var markSprite = art.Marks[(int)mark.Kind];
@@ -324,6 +569,7 @@ namespace Cartograph.MapUI
                 AddQuad(quads, p.X + 11, p.Y - 23, 4, 9, gold); AddQuad(quads, p.X + 11, p.Y - 11, 4, 3, gold);
             }
             Flush(context, quads); FlushSprites(context, sprites);
+            MapProfile.Stop("draw.objects+marks", phase); MapProfile.Stop("draw.total", drawStart);
         }
         private readonly struct SpriteDraw
         {
@@ -338,101 +584,241 @@ namespace Cartograph.MapUI
             var a = viewport.Screen(new MapPoint(cx * MapLayout.Tile - MapLayout.Tile / 2, cy * MapLayout.Tile - MapLayout.Tile / 2));
             var b = viewport.Screen(new MapPoint(cx * MapLayout.Tile + MapLayout.Tile / 2, cy * MapLayout.Tile + MapLayout.Tile / 2));
             var rect = Rect.MinMaxRect(Mathf.Round(a.X), Mathf.Round(a.Y), Mathf.Round(b.X), Mathf.Round(b.Y));
-            if (rect.Overlaps(contentRect)) sprites.Add(new SpriteDraw(rect, sprite));
+            if (rect.Overlaps(viewRect)) sprites.Add(new SpriteDraw(rect, sprite));
         }
         // 絵の下の辺の中央を、世界座標の (x, bottom) に合わせて置く。
-        private bool AddAnchored(List<SpriteDraw> sprites, float x, float bottom, Sprite sprite)
+        // grow は大きさの割合(建物が建つ演出で、下の辺を固定したまま伸ばす)。
+        private bool AddAnchored(List<SpriteDraw> sprites, float x, float bottom, Sprite sprite, float grow = 1f)
         {
             if (sprite == null) return false;
-            var r = sprite.rect; float s = viewport.Scale;
+            var r = sprite.rect; float s = viewport.Scale * grow;
             var p = viewport.Screen(new MapPoint(x, bottom));
             var rect = Rect.MinMaxRect(Mathf.Round(p.X - r.width * s / 2), Mathf.Round(p.Y - r.height * s),
                 Mathf.Round(p.X + r.width * s / 2), Mathf.Round(p.Y));
-            if (!rect.Overlaps(contentRect)) return false;
+            if (!rect.Overlaps(viewRect)) return false;
             sprites.Add(new SpriteDraw(rect, sprite)); return true;
         }
         private void AddTerrain(List<SpriteDraw> sprites, List<SpriteDraw> overlays, List<Quad> quads, MapArt art)
         {
             float tile = MapLayout.Tile;
-            var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(contentRect.width, contentRect.height));
+            var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(viewRect.width, viewRect.height));
             int x0 = Mathf.FloorToInt(topLeft.X / tile + 0.5f) - 1, x1 = Mathf.FloorToInt(bottomRight.X / tile + 0.5f) + 1;
             int y0 = Mathf.FloorToInt(topLeft.Y / tile + 0.5f) - 1, y1 = Mathf.FloorToInt(bottomRight.Y / tile + 0.5f) + 1;
-            // 引いて見た時は、壁を1枚ずつ描かず暗い色で塗る(描く数を抑える)。
-            if ((long)(x1 - x0 + 1) * (y1 - y0 + 1) > 20000)
-                AddQuad(quads, 0, 0, contentRect.width, contentRect.height, new Color32(34, 30, 34, 255));
-            else
+            long visible = (long)(x1 - x0 + 1) * (y1 - y0 + 1);
+            // 引いて見た時(見える範囲が広い時)は、マスを1枚ずつ描かず、土地を 1 マス 1 ピクセルにした絵を 1 枚だけ描く。
+            if (visible > OverviewCells)
+            {
+                AddQuad(quads, 0, 0, viewRect.width, viewRect.height, new Color32(34, 30, 34, 255));
+                if (EnsureOverview()) { overviewVisible = true; return; }
+                if (visible > 20000) return; // 絵が作れない(広すぎる)時は、暗い色だけにする。
+            }
+            long wallStart = MapProfile.Start();
+            for (int y = y0; y <= y1; y++)
+            for (int x = x0; x <= x1; x++)
+                if (!land.Contains(Key(x, y))) AddTile(sprites, x, y, art.Wall[MapLayout.CellHash(x, y) % art.Wall.Length]);
+            MapProfile.Stop("terrain.walls", wallStart);
+            // 見える範囲のマスが、土地全体より少なければ範囲を、そうでなければ土地を走査する。
+            long landStart = MapProfile.Start(); int landCells = 0;
+            if (visible < land.Count)
+            {
                 for (int y = y0; y <= y1; y++)
                 for (int x = x0; x <= x1; x++)
-                    if (!land.Contains(Key(x, y))) AddTile(sprites, x, y, art.Wall[MapLayout.StableHash(x + "," + y) % art.Wall.Length]);
+                { long cell = Key(x, y); if (land.Contains(cell)) { AddLandCell(sprites, overlays, art, cell, x, y); landCells++; } }
+            }
+            else
+                foreach (long key in land)
+                {
+                    int x = (int)(key >> 32), y = (int)(uint)key;
+                    if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+                    AddLandCell(sprites, overlays, art, key, x, y); landCells++;
+                }
+            MapProfile.Stop("terrain.land", landStart); MapProfile.Count("terrain.landCells", landCells); MapProfile.Count("terrain.visibleCells", visible);
+        }
+        // 引いた時の地形の絵。土地のマスを 1 ピクセルにして、解析のたびに作り直す(描く時に初めて作る)。
+        private const int OverviewCells = 6000, OverviewMaxSide = 4096;
+        private Texture2D overview;
+        private bool overviewDirty = true, overviewVisible;
+        private int overviewX0, overviewY0, overviewW, overviewH;
+        private bool EnsureOverview()
+        {
+            if (!overviewDirty) return overview != null;
+            overviewDirty = false;
+            if (overview != null) { UnityEngine.Object.Destroy(overview); overview = null; }
+            if (land.Count == 0) return false;
+            int minX = int.MaxValue, minY = int.MaxValue, maxX = int.MinValue, maxY = int.MinValue;
             foreach (long key in land)
             {
                 int x = (int)(key >> 32), y = (int)(uint)key;
-                if (x < x0 || x > x1 || y < y0 || y > y1) continue;
+                if (x < minX) minX = x; if (x > maxX) maxX = x; if (y < minY) minY = y; if (y > maxY) maxY = y;
+            }
+            int w = maxX - minX + 1, h = maxY - minY + 1;
+            if (w > OverviewMaxSide || h > OverviewMaxSide) return false;
+            var pixels = new Color32[w * h];
+            var ground = new Color32(88, 118, 82, 255); var path = new Color32(150, 112, 72, 255);
+            foreach (long key in land)
+            {
+                int x = (int)(key >> 32), y = (int)(uint)key;
+                pixels[(maxY - y) * w + (x - minX)] = pathMask.ContainsKey(key) ? path : ground;
+            }
+            overview = new Texture2D(w, h, TextureFormat.RGBA32, false) { filterMode = FilterMode.Point, wrapMode = TextureWrapMode.Clamp, hideFlags = HideFlags.HideAndDontSave };
+            overview.SetPixels32(pixels); overview.Apply(false, true);
+            overviewX0 = minX; overviewY0 = minY; overviewW = w; overviewH = h;
+            return true;
+        }
+        private void DrawOverview(MeshGenerationContext context)
+        {
+            float tile = MapLayout.Tile;
+            var a = viewport.Screen(new MapPoint((overviewX0 - 0.5f) * tile, (overviewY0 - 0.5f) * tile));
+            var b = viewport.Screen(new MapPoint((overviewX0 + overviewW - 0.5f) * tile, (overviewY0 + overviewH - 0.5f) * tile));
+            var mesh = context.Allocate(4, 6, overview);
+            Color32 white = new Color32(255, 255, 255, 255);
+            mesh.SetNextVertex(new Vertex { position = new Vector3(a.X, a.Y, Vertex.nearZ), uv = new Vector2(0, 1), tint = white });
+            mesh.SetNextVertex(new Vertex { position = new Vector3(b.X, a.Y, Vertex.nearZ), uv = new Vector2(1, 1), tint = white });
+            mesh.SetNextVertex(new Vertex { position = new Vector3(b.X, b.Y, Vertex.nearZ), uv = new Vector2(1, 0), tint = white });
+            mesh.SetNextVertex(new Vertex { position = new Vector3(a.X, b.Y, Vertex.nearZ), uv = new Vector2(0, 0), tint = white });
+            mesh.SetNextIndex(0); mesh.SetNextIndex(1); mesh.SetNextIndex(2); mesh.SetNextIndex(2); mesh.SetNextIndex(3); mesh.SetNextIndex(0);
+        }
+        // 土地のマスの絵(崩れる演出を除く)。壁との境目や道の向きは、解析のたびに一度だけ決めて持つ。
+        private struct TerrainCell { public Sprite Tile, Overlay; public bool Path; }
+        private readonly Dictionary<long, TerrainCell> terrainCells = new Dictionary<long, TerrainCell>();
+        private void BuildTerrainCells(MapArt art)
+        {
+            terrainCells.Clear();
+            if (!art.HasTiles) return;
+            foreach (long key in land)
+            {
+                int x = (int)(key >> 32), y = (int)(uint)key;
+                if (art.HasPaths && pathMask.TryGetValue(key, out int open))
+                { terrainCells[key] = new TerrainCell { Tile = art.PathPlain[open], Overlay = PathOverlay(key, open, art), Path = true }; continue; }
                 // 壁に接する辺の組み合わせ: 上=1 右=2 下=4 左=8。縁なしの時だけ、斜めが壁の角を調べる。
                 int mask = (land.Contains(Key(x, y - 1)) ? 0 : 1) | (land.Contains(Key(x + 1, y)) ? 0 : 2)
                     | (land.Contains(Key(x, y + 1)) ? 0 : 4) | (land.Contains(Key(x - 1, y)) ? 0 : 8);
                 Sprite sprite;
-                if (art.HasPaths && pathMask.TryGetValue(key, out int open))
-                {
-                    AddTile(sprites, x, y, art.PathPlain[open]);
-                    AddPathOverlay(overlays, key, x, y, open, art);
-                    continue;
-                }
-                if (collapsing.TryGetValue(key, out int started) && frame - started < art.Collapse.Length)
-                { AddTile(sprites, x, y, art.Collapse[frame - started]); continue; }
                 if (mask != 0) sprite = art.Border[mask];
                 else
                 {
                     int inner = !land.Contains(Key(x - 1, y - 1)) ? 0 : !land.Contains(Key(x + 1, y - 1)) ? 1
                         : !land.Contains(Key(x + 1, y + 1)) ? 2 : !land.Contains(Key(x - 1, y + 1)) ? 3 : -1;
                     sprite = inner >= 0 && inner < art.BorderInner.Length ? art.BorderInner[inner]
-                        : art.Ground[MapLayout.StableHash(x + ":" + y) % art.Ground.Length];
+                        : art.Ground[MapLayout.CellHash(x, y) % art.Ground.Length];
                 }
-                AddTile(sprites, x, y, sprite);
+                terrainCells[key] = new TerrainCell { Tile = sprite };
             }
         }
-        // 種別の重ね絵は、まっすぐ(縦5・横10)のマスだけに載せる。
-        private void AddPathOverlay(List<SpriteDraw> overlays, long key, int x, int y, int open, MapArt art)
+        // 1 つの土地のマスの絵を加える。
+        private void AddLandCell(List<SpriteDraw> sprites, List<SpriteDraw> overlays, MapArt art, long key, int x, int y)
         {
-            if ((open != 5 && open != 10) || !pathKind.TryGetValue(key, out var kind)) return;
+            if (!terrainCells.TryGetValue(key, out var cell)) return;
+            if (!cell.Path && collapsing.Count > 0 && collapsing.TryGetValue(key, out int started))
+            {
+                // 崩れ始めるまでは、まだ壁のまま。
+                if (frame < started) { AddTile(sprites, x, y, art.Wall[MapLayout.CellHash(x, y) % art.Wall.Length]); return; }
+                if (frame - started < art.Collapse.Length) { AddTile(sprites, x, y, art.Collapse[frame - started]); return; }
+            }
+            AddTile(sprites, x, y, cell.Tile);
+            if (cell.Overlay != null) AddTile(overlays, x, y, cell.Overlay);
+        }
+        // 種別の重ね絵は、まっすぐ(縦5・横10)のマスだけに載せる。
+        private Sprite PathOverlay(long key, int open, MapArt art)
+        {
+            if ((open != 5 && open != 10) || !pathKind.TryGetValue(key, out var kind)) return null;
             bool vertical = open == 5;
-            if (vertical != (kind.Value == 0 || kind.Value == 2)) return;
+            if (vertical != (kind.Value == 0 || kind.Value == 2)) return null;
             Sprite[] frames = kind.Key == RoadKind.Premise ? art.OverlayPremise
                 : kind.Key == RoadKind.Contrast ? art.OverlayContrast : art.OverlayExample;
             int index = kind.Key == RoadKind.Premise ? kind.Value : vertical ? 1 : 0;
-            if (index < frames.Length) AddTile(overlays, x, y, frames[index]);
+            return index < frames.Length ? frames[index] : null;
         }
-        private void AddFlowers(List<SpriteDraw> sprites, MapArt art)
+        // 奥行きの順に並べるための絵。Bottom は絵の下の辺の世界座標。
+        // 同じ高さでは、Layer(自然物 < 花 < 旗 < 建物の順に手前)、次に同じテクスチャ同士でまとめる(メッシュの数を抑えるため)。
+        private const int LayerNature = 0, LayerFlower = 1, LayerFlag = 2, LayerBuilding = 3;
+        private readonly struct DepthSprite
+        {
+            public readonly float Bottom;
+            public readonly int Layer, Texture, Order;
+            public readonly SpriteDraw Draw;
+            public DepthSprite(float bottom, int layer, int order, SpriteDraw draw)
+            { Bottom = bottom; Layer = layer; Order = order; Draw = draw; Texture = draw.Sprite.texture.GetInstanceID(); }
+        }
+        private void AddFlowers(List<DepthSprite> objects, MapArt art)
         {
             if (snapshot == null) return;
-            var found = new List<KeyValuePair<float, SpriteDraw>>();
             var one = new List<SpriteDraw>(1);
-            foreach (var flower in snapshot.Flowers)
+            foreach (var item in flowerDraws)
             {
-                if (nodes[flower.Node].TypedChars == 0) continue;
-                int emotion = (int)flower.Emotion, hash = MapLayout.StableHash(flower.Node + ":" + flower.Line);
+                var flower = item.Flower; int emotion = (int)flower.Emotion;
                 var frames = art.Flowers[emotion];
-                var sprite = flower.Withered ? art.Withered[emotion] : frames.Length == 0 ? null : frames[(frame + hash) % frames.Length];
-                var p = positions[flower.Node];
-                // 拠点のマスと、そのまわり1マスのどこかに咲かせる。
-                float x = p.X + (hash % 3 - 1) * MapLayout.Tile, bottom = p.Y + (hash / 3 % 3 - 1) * MapLayout.Tile + MapLayout.Tile / 2;
+                var sprite = flower.Withered ? art.Withered[emotion] : frames.Length == 0 ? null : frames[(frame + item.Hash) % frames.Length];
                 one.Clear();
-                if (AddAnchored(one, x, bottom, sprite)) found.Add(new KeyValuePair<float, SpriteDraw>(bottom, one[0]));
+                if (AddAnchored(one, item.X, item.Bottom, sprite)) objects.Add(new DepthSprite(item.Bottom, LayerFlower, objects.Count, one[0]));
             }
-            // 奥(上)から手前(下)の順に重ねる。
-            found.Sort((a, b) => a.Key.CompareTo(b.Key));
-            foreach (var pair in found) sprites.Add(pair.Value);
         }
-        private void AddFlags(List<SpriteDraw> sprites, List<Quad> quads, MapArt art)
+        // 画面内の自然物だけを加える。拡大率が小さい時は描かない。
+        private void AddNature(List<DepthSprite> objects, MapArt art)
+        {
+            if (natureItems.Count == 0 || viewport.Scale < NatureConfig.Settings.HideBelowScale) return;
+            float tile = MapLayout.Tile;
+            var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(viewRect.width, viewRect.height));
+            float left = topLeft.X - tile * 2, right = bottomRight.X + tile * 2, top = topLeft.Y - tile * 2, bottom = bottomRight.Y + tile * 4;
+            var one = new List<SpriteDraw>(1);
+            foreach (var item in natureItems)
+            {
+                float x = item.X * tile, baseline = item.Y * tile + tile / 2;
+                if (x < left || x > right || baseline < top || baseline > bottom) continue;
+                one.Clear();
+                if (AddAnchored(one, x, baseline, art.Nature[(int)item.Kind])) objects.Add(new DepthSprite(baseline, LayerNature, objects.Count, one[0]));
+            }
+        }
+        private void AddFlags(List<DepthSprite> objects, List<Quad> quads, MapArt art)
         {
             if (snapshot == null) return;
-            foreach (var node in snapshot.Nodes.OrderBy(n => positions[n.Id].Y))
+            var one = new List<SpriteDraw>(1);
+            foreach (var flag in flagDraws)
             {
-                var frames = art.FlagFor(MapLayout.StableHash(node.Town));
+                var frames = flag.Frames;
                 if (frames.Length == 0)
-                { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 5, p.Y - 5, 10, 10, new Color32(210, 230, 188, 255)); continue; }
-                var at = positions[node.Id];
-                AddAnchored(sprites, at.X, at.Y + MapLayout.Tile / 2, frames[frame % frames.Length]);
+                { var p = viewport.Screen(flag.At); AddQuad(quads, p.X - 5, p.Y - 5, 10, 10, new Color32(210, 230, 188, 255)); continue; }
+                one.Clear();
+                if (AddAnchored(one, flag.X, flag.Bottom, frames[frame % frames.Length])) objects.Add(new DepthSprite(flag.Bottom, LayerFlag, objects.Count, one[0]));
+            }
+        }
+        // 固定サイズの建物は1枚絵、ビルは1階・中階(a と b を交互)・屋上を下から積む。
+        private void AddBuildings(List<DepthSprite> objects, MapArt art)
+        {
+            var one = new List<SpriteDraw>(1);
+            foreach (var p in placements)
+            {
+                float tile = MapLayout.Tile, x = (p.X + (p.Size.Width - 1) / 2f) * tile, bottom = (p.Y + p.Size.Depth - 1) * tile + tile / 2;
+                float top = bottom, grow = 1f;
+                // 建ち始めの建物は、下の辺を固定したまま伸びる。スクロールを待つ間は、まだ見せない。
+                if (appearing.Count > 0 && appearing.TryGetValue(BuildingKey(p.Building), out int startedAt))
+                { grow = BuildingAppearance.Grow(frame - startedAt); if (grow <= 0) continue; }
+                void Part(Sprite sprite)
+                {
+                    if (sprite == null) return;
+                    one.Clear();
+                    if (AddAnchored(one, x, top, sprite, grow)) objects.Add(new DepthSprite(bottom, LayerBuilding, objects.Count, one[0]));
+                    top -= sprite.rect.height * grow;
+                }
+                if (p.Size.Shape != BuildingShape.Tower) { Part(art.Fixed(p.Size.Shape)); continue; }
+                var tower = art.TowerFor(p.Size.Width, MapLayout.StableHash(p.Building.File));
+                if (tower == null) continue;
+                Part(tower.Ground);
+                for (int floor = 0; floor < p.Size.Floors; floor++) Part(floor % 2 == 0 ? tower.MidA : tower.MidB);
+                Part(tower.Roof);
+            }
+        }
+        private static void FlushOrdered(MeshGenerationContext context, List<DepthSprite> objects)
+        {
+            objects.Sort((a, b) => a.Bottom != b.Bottom ? a.Bottom.CompareTo(b.Bottom) : a.Layer != b.Layer ? a.Layer.CompareTo(b.Layer)
+                : a.Texture != b.Texture ? a.Texture.CompareTo(b.Texture) : a.Order.CompareTo(b.Order));
+            var run = new List<SpriteDraw>();
+            for (int i = 0; i < objects.Count; i++)
+            {
+                run.Add(objects[i].Draw);
+                // 同じテクスチャが続く間だけ1つのメッシュにまとめる(順序を保つため、違う絵が挟まれば区切る)。
+                if (i + 1 < objects.Count && objects[i + 1].Draw.Sprite.texture == objects[i].Draw.Sprite.texture) continue;
+                FlushSprites(context, run); run.Clear();
             }
         }
         // 同じ絵(テクスチャ)のものをまとめて1つのメッシュにする。

@@ -45,6 +45,23 @@ namespace Cartograph.EditorUI
             (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(Path.Combine(project.Root, ".cartograph", "book-title.txt"), value);
             bookTitle = value; Notify();
         }
+        // 拠点の位置の保存(.cartograph/map-layout.txt)。壊れていても、なくても、空の配置として読む。
+        private string MapLayoutPath => Path.Combine(project.Root, ".cartograph", "map-layout.txt");
+        public IReadOnlyDictionary<string, Cartowords.MapPresentation.MapPoint> LoadMapLayout()
+        {
+            if (project == null) return new Dictionary<string, Cartowords.MapPresentation.MapPoint>();
+            try { return Cartowords.MapPresentation.MapLayoutFile.Parse((fileSystem ?? new DiskFileSystem()).ReadAllText(MapLayoutPath)); }
+            catch (IOException) { return new Dictionary<string, Cartowords.MapPresentation.MapPoint>(); }
+            catch (UnauthorizedAccessException) { return new Dictionary<string, Cartowords.MapPresentation.MapPoint>(); }
+        }
+        // 位置の保存は補助的なもの。書けなくても編集を止めないよう、失敗は false で返す。
+        public bool SaveMapLayout(IReadOnlyDictionary<string, Cartowords.MapPresentation.MapPoint> positions)
+        {
+            if (project == null) return false;
+            try { (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(MapLayoutPath, Cartowords.MapPresentation.MapLayoutFile.Serialize(positions)); return true; }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
         public ProjectEditorWorkspace(NoteSessionOptions options = null, IFileSystem fileSystem = null)
         { this.options = options ?? new NoteSessionOptions { SaveDebounceMs = 200 }; this.fileSystem = fileSystem; }
         public event Action Changed;

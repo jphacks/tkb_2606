@@ -65,6 +65,35 @@ namespace Cartograph.IntegrationTests
             Assert.Throws<InvalidOperationException>(() => MapAnalysisAdapter.Convert(request, analysis));
         }
         [Test]
+        public async Task MapLayoutSurvivesReopeningTheProjectAndBrokenFilesReadAsEmpty()
+        {
+            var env = new Env(); env.PutNote("A", "# a");
+            var ws = new ProjectEditorWorkspace(env.Options, env.Fs); await ws.OpenProject(env.Paths.Root);
+            Assert.That(ws.LoadMapLayout().Count, Is.EqualTo(0));
+            var layout = new Dictionary<string, MapPoint> { { "A#a", new MapPoint(2 * MapLayout.Tile, -3 * MapLayout.Tile) } };
+            Assert.That(ws.SaveMapLayout(layout), Is.True);
+            var reopened = new ProjectEditorWorkspace(env.Options, env.Fs); await reopened.OpenProject(env.Paths.Root);
+            Assert.That(MapLayoutFile.Same(reopened.LoadMapLayout(), layout), Is.True);
+            env.Fs.WriteAllTextAtomic(System.IO.Path.Combine(env.Paths.Root, ".cartograph", "map-layout.txt"), "garbage");
+            Assert.That(reopened.LoadMapLayout().Count, Is.EqualTo(0));
+            Assert.That(new ProjectEditorWorkspace(env.Options, env.Fs).SaveMapLayout(layout), Is.False);
+        }
+        [Test]
+        public void ConvertsProperNounBuildingsWithNoteNameAndEmphasisCounts()
+        {
+            var request = new MapRequest("p", 1, new Dictionary<string, long> { { "人物/田中", 1 }, { "日記", 1 } });
+            var analysis = ProjectAnalyzer.Analyze(new[]
+            {
+                new AnalysisInput(NotePath.Parse("人物/田中"), new LabeledText("別名: 田中\n# 田中さん\n", Origin.Typed), 1),
+                new AnalysisInput(NotePath.Parse("日記"), new LabeledText("# 田中の日\n**田中**が来た。\n", Origin.Typed), 1),
+            });
+            var building = MapAnalysisAdapter.Convert(request, analysis).Buildings.Single();
+            Assert.That(building.Node, Is.EqualTo("日記#田中の日"));
+            Assert.That(building.File, Is.EqualTo("人物/田中"));
+            Assert.That(building.Name, Is.EqualTo("田中"));
+            Assert.That((building.Strong, building.Medium, building.Weak), Is.EqualTo((1, 1, 0)));
+        }
+        [Test]
         public void AddingHeadingPinsExistingPositionsAndRemovingItClearsItsPosition()
         {
             var request = new MapRequest("p", 1, new Dictionary<string, long>());

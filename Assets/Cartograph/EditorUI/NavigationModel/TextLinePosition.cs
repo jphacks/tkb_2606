@@ -22,5 +22,24 @@ namespace Cartograph.EditorUI.Navigation
             }
             return text.Length;
         }
+
+        // Offset の逆。範囲外のオフセットは端に丸める。改行は \n・\r・\r\n のどれも 1 つと数える。
+        public static int LineAt(string text, int offset)
+        {
+            text = text ?? "";
+            offset = Math.Max(0, Math.Min(offset, text.Length));
+            int line = 1;
+            for (int i = 0; i < offset; i++)
+            {
+                if (text[i] == '\r')
+                {
+                    // \r\n の間にカーソルがあるときは、まだ前の行。
+                    if (i + 1 < text.Length && text[i + 1] == '\n') { if (i + 2 > offset) break; i++; }
+                    line++;
+                }
+                else if (text[i] == '\n') line++;
+            }
+            return line;
+        }
     }
 }

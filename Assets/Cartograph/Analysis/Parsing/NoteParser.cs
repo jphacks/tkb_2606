@@ -126,6 +126,13 @@ namespace Cartograph.Analysis
             var marks = new List<Mark>();
             var flowers = new List<Flower>();
             bool[] typedMask = lexicon != null && lexicon.Count > 0 ? BuildTypedMask(input.Document) : null;
+
+            // 先頭行が「別名:」なら固有名詞ノート。自分自身は数えないので、走査用の本文は作らない。
+            var aliases = lines.Count > 0 && !lines[0].InCode && lines[0].Level == 0
+                ? ProperNounScanner.ParseAliases(text.Substring(lines[0].Start, lines[0].Length))
+                : new List<string>();
+            var scanLines = new List<ScanLine>();
+
             for (int i = 0; i < lines.Count; i++)
             {
                 var line = lines[i];
@@ -134,12 +141,14 @@ namespace Cartograph.Analysis
                 string nodeId = nodes[ownerOfLine[i]].Id;
 
                 if (IsFog(body)) fogs.Add(new Fog(nodeId, line.Number, body));
+                if (aliases.Count == 0 && body.Length > 0)
+                    scanLines.Add(ProperNounScanner.BuildScanLine(nodeId, line.Number, line.Level > 0 ? line.Title : body, line.Level > 0));
                 if (line.Level > 0) continue;
                 ParseLinks(body, line.Number, nodeId, links, marks);
                 if (typedMask != null) FindFlowers(text, line, nodeId, lexicon, typedMask, flowers);
             }
 
-            return new NoteAnalysis(input.NoteId, input.Revision, nodes, autoEdges, links, fogs, flowers, marks);
+            return new NoteAnalysis(input.NoteId, input.Revision, nodes, autoEdges, links, fogs, flowers, marks, aliases, scanLines);
         }
 
         private static bool[] BuildTypedMask(LabeledText doc)

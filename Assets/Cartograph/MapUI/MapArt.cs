@@ -18,8 +18,51 @@ namespace Cartograph.MapUI
         public readonly Sprite[] Withered;
         public readonly Sprite[] FogAnim, FogTile, Marks, Collapse, PathPlain, OverlayPremise, OverlayContrast, OverlayExample;
 
+        // ビルの部品。屋上・中階(a と b を交互に積む)・1階。幅は地面で占めるマス数。
+        public sealed class TowerArt
+        {
+            public readonly Sprite Roof, MidA, MidB, Ground;
+            public TowerArt(Sprite roof, Sprite midA, Sprite midB, Sprite ground) { Roof = roof; MidA = midA; MidB = midB; Ground = ground; }
+            public bool Complete => Roof != null && MidA != null && MidB != null && Ground != null;
+        }
+        // 幅 1・2・3 マスごとに、見た目の違うビルを並べる。
+        static readonly string[][] TowerNames =
+        {
+            new[] { "stone_tower", "cottage_tower" },
+            new[] { "tile_shop", "timber_inn" },
+            new[] { "factory", "modern_office" },
+        };
+        public readonly Sprite Hut, House, Lodge3x2, Lodge3x3;
+        public readonly TowerArt[][] Towers;
+        // 自然物の絵。NatureKind の値で引く。読めないものは null。
+        static readonly string[] NatureNames =
+        {
+            "nature_grass_tuft", "nature_sprout", "nature_bush", "nature_bush_berry", "nature_rock",
+            "nature_mushroom_brown", "nature_mushroom_red", "nature_stump",
+            "nature_tree_pine_s", "nature_tree_pine_l", "nature_tree_round_s", "nature_tree_round_l",
+        };
+        public readonly Sprite[] Nature;
+
         MapArt()
         {
+            Nature = new Sprite[NatureNames.Length];
+            for (int i = 0; i < NatureNames.Length; i++) Nature[i] = Single("Nature/" + NatureNames[i]);
+            Hut = Single("Buildings/building_hut_1x1");
+            House = Single("Buildings/building_house_2x2");
+            Lodge3x2 = Single("Buildings/building_lodge_3x2");
+            Lodge3x3 = Single("Buildings/building_lodge_3x3");
+            Towers = new TowerArt[TowerNames.Length][];
+            for (int w = 0; w < TowerNames.Length; w++)
+            {
+                var list = new System.Collections.Generic.List<TowerArt>();
+                foreach (string name in TowerNames[w])
+                {
+                    string p = "Buildings/building_" + name + "_";
+                    var tower = new TowerArt(Single(p + "roof"), Single(p + "mid_a"), Single(p + "mid_b"), Single(p + "ground"));
+                    if (tower.Complete) list.Add(tower);
+                }
+                Towers[w] = list.ToArray();
+            }
             FogAnim = Load("Fog/anim_fog");
             FogTile = Load("Fog/tile_fog");
             Marks = new[] { Single("Marks/mark_noreason"), Single("Marks/mark_broken"), Single("Marks/mark_isolated") };
@@ -63,5 +106,25 @@ namespace Cartograph.MapUI
         public bool HasTiles => Wall.Length > 0 && Ground.Length > 0 && Border.Length >= 16;
         public bool HasPaths => PathPlain.Length >= 16;
         public Sprite[] FlagFor(int hash) => Flags[hash % Flags.Length];
+
+        // 建物の絵。足りない種類は null / 空を返し、呼び出し側はその建物を描かない。
+        public Sprite Fixed(Cartowords.MapPresentation.BuildingShape shape)
+        {
+            switch (shape)
+            {
+                case Cartowords.MapPresentation.BuildingShape.Hut: return Hut;
+                case Cartowords.MapPresentation.BuildingShape.House: return House;
+                case Cartowords.MapPresentation.BuildingShape.Lodge3x2: return Lodge3x2;
+                case Cartowords.MapPresentation.BuildingShape.Lodge3x3: return Lodge3x3;
+                default: return null;
+            }
+        }
+        // 幅(1〜3)のビルのうち、固有名詞ごとの値で1つ選ぶ。その幅に完成したものがなければ null。
+        public TowerArt TowerFor(int width, int hash)
+        {
+            if (width < 1 || width > Towers.Length || Towers[width - 1].Length == 0) return null;
+            var list = Towers[width - 1];
+            return list[hash / 3 % list.Length];
+        }
     }
 }

@@ -13,6 +13,16 @@ namespace Cartograph.MapUI
         private MapSnapshot latest;
         private bool isPreview;
         public event Action<string, int> OpenNoteRequested;
+        // 実ノートの拠点の位置が変わった時(表示サンプルでは通知しない)。
+        public event Action<IReadOnlyDictionary<string, MapPoint>> LayoutChanged;
+        public void SetSavedLayout(IReadOnlyDictionary<string, MapPoint> saved) => canvas.SetSavedLayout(saved);
+        // エディタのカーソルがある拠点。表示サンプルの間は覚えておくだけで、実ノートに戻ったときに示す。
+        private string editorNode;
+        public void SetEditorFocus(string nodeId)
+        {
+            editorNode = nodeId;
+            if (!isPreview) canvas.SetEditorFocus(nodeId);
+        }
 
         public MapPanel()
         {
@@ -28,13 +38,22 @@ namespace Cartograph.MapUI
             {
                 isPreview = !isPreview;
                 canvas.SetSnapshot(isPreview ? Sample() : latest);
+                if (!isPreview) canvas.SetEditorFocus(editorNode);
                 preview.text = isPreview ? "サンプルを閉じる" : "表示サンプル";
                 caption.text = isPreview ? "MAP VIEW / 表示サンプル（実ノートではありません）" : "MAP VIEW";
                 info.text = isPreview ? "ドラッグで移動・ホイールで拡大縮小。サンプルから実ノートは開きません。" : "解析データ待ち";
             });
             preview.AddToClassList("map-preview-button"); Add(preview);
             canvas.NodeSelected += node => info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く";
+            canvas.LayoutChanged += layout => { if (!isPreview) LayoutChanged?.Invoke(layout); };
             canvas.MarkSelected += message => info.text = message;
+            canvas.BuildingSelected += (building, node) =>
+                info.text = building.Name + " / 「" + node.Title + "」に " + building.Count + " 回 / ダブルクリックで開く";
+            canvas.BuildingDoubleClicked += (building, node) =>
+            {
+                if (isPreview) { info.text = "表示サンプルです。実ノートの編集は行いません。"; return; }
+                OpenNoteRequested?.Invoke(building.File, 1);
+            };
             canvas.NodeDoubleClicked += node =>
             {
                 if (isPreview) { info.text = "表示サンプルです。実ノートの編集は行いません。"; return; }
@@ -45,6 +64,7 @@ namespace Cartograph.MapUI
         {
             latest = snapshot; isPreview = false; preview.text = "表示サンプル";
             caption.text = "MAP VIEW"; canvas.SetSnapshot(snapshot);
+            if (snapshot == null) editorNode = null;
             info.text = snapshot == null ? "解析データ待ち" : snapshot.Nodes.Count + " 拠点・" + snapshot.Roads.Count + " 本の線 / " +
                 (snapshot.Roads.Count == 0 ? "「関連ノート」から相手を選び「線でつなぐ」で追加できます" : "ドラッグで移動・ダブルクリックで開く");
         }
@@ -56,7 +76,6 @@ namespace Cartograph.MapUI
             if (open && isPreview) Present(latest);
             if (!open && !isPreview) info.text = "保存先フォルダを開くと、ノートのマップを表示します。";
         }
-        public void SetFlowerColor(Emotion emotion, UnityEngine.Color32 color) => canvas.SetFlowerColor(emotion, color);
         private static MapSnapshot Sample()
         {
             var nodes = new List<MapNode>(); var roads = new List<MapRoad>(); var flowers = new List<MapFlower>();
@@ -71,7 +90,12 @@ namespace Cartograph.MapUI
                 new[] { new MapFog("sample-4", 5) }, new[] {
                     new MapMark("sample-4", MarkKind.BrokenLink, "この道の先は、まだ地図にありません"),
                     new MapMark("sample-11", MarkKind.Isolated, "ここは、まだどこともつながっていません"),
-                    new MapMark("sample-6", MarkKind.MissingReason, "この道の理由は、まだ書かれていません") }, flowers);
+                    new MapMark("sample-6", MarkKind.MissingReason, "この道の理由は、まだ書かれていません") }, flowers,
+                buildings: new[] {
+                    new MapBuilding("sample-0", "人物/田中", "田中", 1, 0, 0), new MapBuilding("sample-1", "人物/田中", "田中", 0, 1, 2),
+                    new MapBuilding("sample-2", "人物/鈴木", "鈴木", 1, 2, 3), new MapBuilding("sample-3", "人物/鈴木", "鈴木", 2, 3, 5),
+                    new MapBuilding("sample-5", "場所/図書館", "図書館", 4, 4, 9), new MapBuilding("sample-7", "場所/図書館", "図書館", 0, 0, 1),
+                    new MapBuilding("sample-8", "用語/光合成", "光合成", 5, 5, 12) });
         }
     }
 }

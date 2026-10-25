@@ -19,11 +19,13 @@ namespace Cartowords.MapPresentation
         public int Line { get; }
         public int TypedChars { get; }
         public bool Isolated { get; }
-        public MapNode(string id, string file, string title, int line, int typedChars, bool isolated = false)
+        /// <summary>見出しの深さ(1〜3)。見出しのないファイルの拠点は 0。</summary>
+        public int Level { get; }
+        public MapNode(string id, string file, string title, int line, int typedChars, bool isolated = false, int level = 0)
         {
-            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(file) || line < 1 || typedChars < 0)
+            if (string.IsNullOrEmpty(id) || string.IsNullOrEmpty(file) || line < 1 || typedChars < 0 || level < 0 || level > 3)
                 throw new ArgumentException("Invalid rendering node.");
-            Id = id; File = file; Title = title ?? ""; Line = line; TypedChars = typedChars; Isolated = isolated;
+            Id = id; File = file; Title = title ?? ""; Line = line; TypedChars = typedChars; Isolated = isolated; Level = level;
             int slash = file.LastIndexOf('/'); Town = slash < 0 ? "" : file.Substring(0, slash);
         }
     }
@@ -79,10 +81,12 @@ namespace Cartowords.MapPresentation
         public IReadOnlyList<MapFog> Fogs { get; }
         public IReadOnlyList<MapMark> Marks { get; }
         public IReadOnlyList<MapFlower> Flowers { get; }
+        public IReadOnlyList<MapBuilding> Buildings { get; }
         public MapSnapshot(MapRequest request, IEnumerable<MapNode> nodes, IEnumerable<MapRoad> roads = null,
             IEnumerable<MapFog> fogs = null, IEnumerable<MapMark> marks = null, IEnumerable<MapFlower> flowers = null,
-            int schemaVersion = 1)
+            int schemaVersion = 1, IEnumerable<MapBuilding> buildings = null)
         {
+            Buildings = Array.AsReadOnly((buildings ?? Array.Empty<MapBuilding>()).ToArray());
             Request = request ?? throw new ArgumentNullException(nameof(request)); SchemaVersion = schemaVersion;
             Nodes = Array.AsReadOnly((nodes ?? throw new ArgumentNullException(nameof(nodes))).ToArray());
             Roads = Array.AsReadOnly((roads ?? Array.Empty<MapRoad>()).ToArray());
@@ -94,7 +98,8 @@ namespace Cartowords.MapPresentation
             if (Roads.Any(r => r == null || !ids.Contains(r.From) || !ids.Contains(r.To) || !Enum.IsDefined(typeof(RoadKind), r.Kind)) ||
                 Fogs.Any(f => f == null || !ids.Contains(f.Node) || f.Line < 1) ||
                 Marks.Any(m => m == null || !ids.Contains(m.Node) || !Enum.IsDefined(typeof(MarkKind), m.Kind)) ||
-                Flowers.Any(f => f == null || !ids.Contains(f.Node) || f.Line < 1 || !Enum.IsDefined(typeof(Emotion), f.Emotion)))
+                Flowers.Any(f => f == null || !ids.Contains(f.Node) || f.Line < 1 || !Enum.IsDefined(typeof(Emotion), f.Emotion)) ||
+                Buildings.Any(b => b == null || !ids.Contains(b.Node)))
                 throw new ArgumentException("Invalid map item or unknown node reference.");
         }
     }

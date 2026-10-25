@@ -54,8 +54,14 @@ namespace Cartograph.Analysis
         /// <summary>ノート単独で決まる目印(理由なし)。</summary>
         public IReadOnlyList<Mark> Marks { get; }
 
+        /// <summary>固有名詞ノートの別名(先頭行の「別名:」)。固有名詞ノートでなければ空。</summary>
+        public IReadOnlyList<string> Aliases { get; }
+        /// <summary>別名の検出用の本文。固有名詞ノートでは作らない(自分自身は数えない)。</summary>
+        public IReadOnlyList<ScanLine> ScanLines { get; }
+
         public NoteAnalysis(NotePath noteId, long revision, IEnumerable<Node> nodes, IEnumerable<Edge> autoEdges,
-            IEnumerable<NoteLink> links, IEnumerable<Fog> fogs, IEnumerable<Flower> flowers, IEnumerable<Mark> marks)
+            IEnumerable<NoteLink> links, IEnumerable<Fog> fogs, IEnumerable<Flower> flowers, IEnumerable<Mark> marks,
+            IEnumerable<string> aliases = null, IEnumerable<ScanLine> scanLines = null)
         {
             if (!noteId.IsValid) throw new ArgumentException("ノートIDが空です。", nameof(noteId));
             NoteId = noteId;
@@ -66,6 +72,8 @@ namespace Cartograph.Analysis
             Fogs = Copy(fogs);
             Flowers = Copy(flowers);
             Marks = Copy(marks);
+            Aliases = Copy(aliases);
+            ScanLines = Copy(scanLines);
         }
 
         private static IReadOnlyList<T> Copy<T>(IEnumerable<T> source) =>
@@ -82,10 +90,14 @@ namespace Cartograph.Analysis
         public IReadOnlyList<Flower> Flowers { get; }
         /// <summary>ノートごとの、解析した本文の版。UI が手元の版と比べて古い結果を捨てるために使う。</summary>
         public IReadOnlyDictionary<NotePath, long> Revisions { get; }
+        /// <summary>建物。固有名詞ノートの別名が出現した拠点ごとに 1 つ。</summary>
+        public IReadOnlyList<Building> Buildings { get; }
 
         public AnalysisResult(IEnumerable<Node> nodes, IEnumerable<Edge> edges, IEnumerable<Fog> fogs,
-            IEnumerable<Mark> marks, IEnumerable<Flower> flowers, IReadOnlyDictionary<NotePath, long> revisions)
+            IEnumerable<Mark> marks, IEnumerable<Flower> flowers, IReadOnlyDictionary<NotePath, long> revisions,
+            IEnumerable<Building> buildings = null)
         {
+            Buildings = Copy(buildings);
             Nodes = Copy(nodes);
             Edges = Copy(edges);
             Fogs = Copy(fogs);

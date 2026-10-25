@@ -136,6 +136,7 @@ namespace Cartograph.EditorUI
             main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
             mapPanel = new MapPanel(); main.Add(mapPanel);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
+            mapPanel.LayoutChanged += QueueLayoutSave;
             var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
             rightWorkspace.style.minWidth = 380; rightWorkspace.style.flexGrow = 1; main.Add(rightWorkspace);
             var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
@@ -319,9 +320,24 @@ namespace Cartograph.EditorUI
             else if (reviewed.Enabled) reviewed.Tick();
             else { SubmitTitle(); SubmitBody(ChangeOrigin.Typing); }
             secondaryPane.Tick();
+            UpdateMapFocus(false);
             UpdateSaveStatus(); UpdateUndoButtons();
             if (activeId != null && undoHistories.TryGetValue(activeId, out var history))
                 history.UpdateSelection(body.cursorIndex, body.selectIndex);
+        }
+
+        // カーソルのある拠点をマップに伝える。ノート・カーソル・本文のどれかが変わった時だけ求め直す(force は解析結果が届いた時)。
+        private string focusNote, focusText;
+        private int focusCursor = -1;
+        private void UpdateMapFocus(bool force)
+        {
+            if (mapPanel == null) return;
+            string text = body.value ?? ""; int cursor = EditorCursor;
+            if (!force && focusCursor == cursor && focusNote == activeId && ReferenceEquals(focusText, text)) return;
+            focusCursor = cursor; focusNote = activeId; focusText = text;
+            string node = activeId == null || displayedMap == null ? null :
+                MapFocus.NodeAt(displayedMap.Nodes, activeId, TextLinePosition.LineAt(text, cursor));
+            mapPanel.SetEditorFocus(node);
         }
 
         private bool SubmitTitle()
@@ -532,6 +548,7 @@ namespace Cartograph.EditorUI
             await Task.Yield();
             var target = workspace as IReviewingEditorWorkspace;
             if (target == null) throw new InvalidOperationException("デモを終了して通常モードで起動してください。");
+            FlushMapLayout();
             try { await target.OpenProject(selected); }
             catch
             {
@@ -592,13 +609,34 @@ namespace Cartograph.EditorUI
         }
         private void OnApplicationFocus(bool focused) { if (focused) QueueRepaint(); }
 
+        // 拠点の位置は、変わってから少し待って保存する。待っている間にプロジェクトが替わったら、別のプロジェクトへは書かない。
+        private IReadOnlyDictionary<string, MapPoint> pendingLayout;
+        private string pendingLayoutRoot;
+        private IVisualElementScheduledItem layoutSaveJob;
+        private void QueueLayoutSave(IReadOnlyDictionary<string, MapPoint> layout)
+        {
+            if (!(workspace is ProjectEditorWorkspace project) || project.ProjectRoot == null) return;
+            pendingLayout = layout; pendingLayoutRoot = project.ProjectRoot;
+            layoutSaveJob?.Pause();
+            layoutSaveJob = root.schedule.Execute(FlushMapLayout); layoutSaveJob.StartingIn(1500);
+        }
+        private void FlushMapLayout()
+        {
+            layoutSaveJob?.Pause();
+            var layout = pendingLayout; pendingLayout = null;
+            if (layout != null && workspace is ProjectEditorWorkspace project && project.ProjectRoot == pendingLayoutRoot)
+                project.SaveMapLayout(layout);
+        }
         private void ResetMapContext()
         {
+            FlushMapLayout();
             rich?.ResetHistory(); secondaryPane?.ResetHistory();
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
             displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());
-            mapPanel?.Present(null);
+            mapPanel?.Present(null); focusCursor = -1; focusNote = null; focusText = null;
+            // 開いたプロジェクトに保存してあった拠点の位置を、最初の解析結果が来る前に渡す。
+            if (workspace is ProjectEditorWorkspace project && project.ProjectRoot != null) mapPanel?.SetSavedLayout(project.LoadMapLayout());
         }
         private static IEnumerable<string> FolderPaths(Cartograph.Core.FolderNode rootFolder)
         {
@@ -635,6 +673,7 @@ namespace Cartograph.EditorUI
                 snapshot.Request.Generation != mapGeneration || !mapGate.TryAccept(snapshot, MapVersions())) return;
             mapPanel.Present(snapshot);
             displayedMap = snapshot;
+            UpdateMapFocus(true);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(snapshot, workspace.Current?.id));
         }
         private async void AnalyzeMap(MapRequest request)
@@ -650,7 +689,6 @@ namespace Cartograph.EditorUI
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (Current()) mapPanel.ShowError("マップを更新できません：" + ex.Message); }
         }
-        public void SetFlowerColor(Emotion emotion, Color32 color) => mapPanel?.SetFlowerColor(emotion, color);
 
         private void ShowReviewNotice(string text)
         {
@@ -808,6 +846,7 @@ namespace Cartograph.EditorUI
             Func<Task> close = () => Execute(async () =>
             {
                 if (!(workspace is ProjectEditorWorkspace target)) throw new InvalidOperationException("通常モードで開いてください。");
+                FlushMapLayout();
                 await target.CloseProject();
                 projectPath.SetValueWithoutNotify("");
                 secondaryPane.Hide(); reviewed.Bind(null, null); activeId = null; undoHistories.Clear();
@@ -851,7 +890,7 @@ namespace Cartograph.EditorUI
 
         private void OnDestroy()
         {
-            mapRequestJob?.Pause();
+            mapRequestJob?.Pause(); FlushMapLayout();
 #if ENABLE_INPUT_SYSTEM
             if (imeKeyboard != null) { imeKeyboard.onIMECompositionChange -= OnComposition; imeKeyboard.onTextInput -= OnTextInput; }
 #endif
