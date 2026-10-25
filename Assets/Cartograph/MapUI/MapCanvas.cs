@@ -713,9 +713,15 @@ namespace Cartograph.MapUI
             var wall = art.Wall[MapLayout.CellHash(x, y) % art.Wall.Length];
             if (!cell.Path && collapsing.Count > 0 && collapsing.TryGetValue(key, out int started))
             {
-                // 崩れ始めるまでは、まだ壁のまま。崩れる絵は壁が透けるので、下に壁を敷く。
+                // 現れ始めるまでは、まだ壁のまま。現れる間は、土地の上に壁の横棒を重ね、1本ずつ消していく。
                 if (frame < started) { AddTile(sprites, x, y, wall); return; }
-                if (frame - started < art.Collapse.Length) { AddTile(sprites, x, y, wall); AddTile(sprites, x, y, art.Collapse[frame - started]); return; }
+                if (frame - started < art.Collapse.Length)
+                {
+                    if (cell.Backed) AddTile(sprites, x, y, wall);
+                    AddTile(sprites, x, y, cell.Tile);
+                    AddTile(overlays, x, y, art.Collapse[frame - started]);
+                    return;
+                }
             }
             if (cell.Backed) AddTile(sprites, x, y, wall);
             AddTile(sprites, x, y, cell.Tile);
