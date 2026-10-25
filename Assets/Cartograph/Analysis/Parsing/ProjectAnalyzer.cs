@@ -109,7 +109,7 @@ namespace Cartograph.Analysis
                 flowers.AddRange(note.Flowers);
             }
 
-            return new AnalysisResult(nodes, edges, fogs, marks, flowers, revisions);
+            return new AnalysisResult(nodes, edges, fogs, marks, flowers, revisions, ProperNounScanner.FindBuildings(notes));
         }
 
         // 宛先を探す。見つかれば None を返して target / targetNote を設定する。
