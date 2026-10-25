@@ -608,7 +608,7 @@ namespace Cartograph.MapUI
             // 引いて見た時(見える範囲が広い時)は、マスを1枚ずつ描かず、土地を 1 マス 1 ピクセルにした絵を 1 枚だけ描く。
             if (visible > OverviewCells)
             {
-                AddQuad(quads, 0, 0, viewRect.width, viewRect.height, new Color32(34, 30, 34, 255));
+                AddQuad(quads, 0, 0, viewRect.width, viewRect.height, new Color32(30, 36, 51, 255));
                 if (EnsureOverview()) { overviewVisible = true; return; }
                 if (visible > 20000) return; // 絵が作れない(広すぎる)時は、暗い色だけにする。
             }
@@ -679,7 +679,8 @@ namespace Cartograph.MapUI
             mesh.SetNextIndex(0); mesh.SetNextIndex(1); mesh.SetNextIndex(2); mesh.SetNextIndex(2); mesh.SetNextIndex(3); mesh.SetNextIndex(0);
         }
         // 土地のマスの絵(崩れる演出を除く)。壁との境目や道の向きは、解析のたびに一度だけ決めて持つ。
-        private struct TerrainCell { public Sprite Tile, Overlay; public bool Path; }
+        // 縁・道の絵は壁の部分が透けているので、下に壁を敷く(Backed)。
+        private struct TerrainCell { public Sprite Tile, Overlay; public bool Path, Backed; }
         private readonly Dictionary<long, TerrainCell> terrainCells = new Dictionary<long, TerrainCell>();
         private void BuildTerrainCells(MapArt art)
         {
@@ -689,32 +690,34 @@ namespace Cartograph.MapUI
             {
                 int x = (int)(key >> 32), y = (int)(uint)key;
                 if (art.HasPaths && pathMask.TryGetValue(key, out int open))
-                { terrainCells[key] = new TerrainCell { Tile = art.PathPlain[open], Overlay = PathOverlay(key, open, art), Path = true }; continue; }
+                { terrainCells[key] = new TerrainCell { Tile = art.PathPlain[open], Overlay = PathOverlay(key, open, art), Path = true, Backed = true }; continue; }
                 // 壁に接する辺の組み合わせ: 上=1 右=2 下=4 左=8。縁なしの時だけ、斜めが壁の角を調べる。
                 int mask = (land.Contains(Key(x, y - 1)) ? 0 : 1) | (land.Contains(Key(x + 1, y)) ? 0 : 2)
                     | (land.Contains(Key(x, y + 1)) ? 0 : 4) | (land.Contains(Key(x - 1, y)) ? 0 : 8);
-                Sprite sprite;
+                Sprite sprite; bool backed = true;
                 if (mask != 0) sprite = art.Border[mask];
                 else
                 {
                     int inner = !land.Contains(Key(x - 1, y - 1)) ? 0 : !land.Contains(Key(x + 1, y - 1)) ? 1
                         : !land.Contains(Key(x + 1, y + 1)) ? 2 : !land.Contains(Key(x - 1, y + 1)) ? 3 : -1;
-                    sprite = inner >= 0 && inner < art.BorderInner.Length ? art.BorderInner[inner]
-                        : art.Ground[MapLayout.CellHash(x, y) % art.Ground.Length];
+                    if (inner >= 0 && inner < art.BorderInner.Length) sprite = art.BorderInner[inner];
+                    else { sprite = art.Ground[MapLayout.CellHash(x, y) % art.Ground.Length]; backed = false; }
                 }
-                terrainCells[key] = new TerrainCell { Tile = sprite };
+                terrainCells[key] = new TerrainCell { Tile = sprite, Backed = backed };
             }
         }
         // 1 つの土地のマスの絵を加える。
         private void AddLandCell(List<SpriteDraw> sprites, List<SpriteDraw> overlays, MapArt art, long key, int x, int y)
         {
             if (!terrainCells.TryGetValue(key, out var cell)) return;
+            var wall = art.Wall[MapLayout.CellHash(x, y) % art.Wall.Length];
             if (!cell.Path && collapsing.Count > 0 && collapsing.TryGetValue(key, out int started))
             {
-                // 崩れ始めるまでは、まだ壁のまま。
-                if (frame < started) { AddTile(sprites, x, y, art.Wall[MapLayout.CellHash(x, y) % art.Wall.Length]); return; }
-                if (frame - started < art.Collapse.Length) { AddTile(sprites, x, y, art.Collapse[frame - started]); return; }
+                // 崩れ始めるまでは、まだ壁のまま。崩れる絵は壁が透けるので、下に壁を敷く。
+                if (frame < started) { AddTile(sprites, x, y, wall); return; }
+                if (frame - started < art.Collapse.Length) { AddTile(sprites, x, y, wall); AddTile(sprites, x, y, art.Collapse[frame - started]); return; }
             }
+            if (cell.Backed) AddTile(sprites, x, y, wall);
             AddTile(sprites, x, y, cell.Tile);
             if (cell.Overlay != null) AddTile(overlays, x, y, cell.Overlay);
         }
