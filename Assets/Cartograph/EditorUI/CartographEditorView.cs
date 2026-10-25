@@ -89,8 +89,9 @@ namespace Cartograph.EditorUI
             if (document.panelSettings == null)
             {
                 ownedPanel = ScriptableObject.CreateInstance<PanelSettings>();
+                // 拡大率は ApplyUiScale が画面の大きさから決める(ScaleWithScreenSize だと上限・下限を置けない)。
                 ownedPanel.scaleMode = PanelScaleMode.ConstantPixelSize;
-                ownedPanel.scale = 1;
+                ownedPanel.scale = UiScaleFor(Screen.width, Screen.height);
                 ownedPanel.themeStyleSheet = Resources.Load<ThemeStyleSheet>("CartographTheme");
                 document.panelSettings = ownedPanel;
             }
@@ -136,21 +137,33 @@ namespace Cartograph.EditorUI
             Button(projectBar, "フォルダを選択", SelectProjectFolder);
             Button(projectBar, "閉じる", RequestCloseProject);
 
-            var main = new TwoPaneSplitView(0, 520, TwoPaneSplitViewOrientation.Horizontal);
+            // 左から 索引 | マップ | エディタ。境界はドラッグで動かせ、幅は次回起動時に復元する。
+            ApplyUiScale();
+            var main = new TwoPaneSplitView(0, PaneWidth(IndexRatioKey, 0.14f, 200, 320), TwoPaneSplitViewOrientation.Horizontal);
             main.style.flexGrow = 1; main.style.minHeight = 0; root.Add(main);
-            mapPanel = new MapPanel(); main.Add(mapPanel);
+            var sidebar = new VisualElement();
+            sidebar.AddToClassList("sidebar");
+            sidebar.style.minWidth = 170;
+            sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
+            main.Add(sidebar);
+            var contentSplit = new TwoPaneSplitView(0, PaneWidth(MapRatioKey, 0.36f, 280, 1100), TwoPaneSplitViewOrientation.Horizontal);
+            contentSplit.style.flexGrow = 1; contentSplit.style.minWidth = 0; main.Add(contentSplit);
+            mapPanel = new MapPanel(); mapPanel.style.minWidth = 240; contentSplit.Add(mapPanel);
             mapPanel.OpenNoteRequested += OpenNoteBeside;
+            mapPanel.CandidateAccepted += AcceptCandidate;
+            mapPanel.CandidateRejected += RejectCandidate;
             mapPanel.LayoutChanged += QueueLayoutSave;
             var rightWorkspace = new VisualElement(); rightWorkspace.AddToClassList("right-workspace");
-            rightWorkspace.style.minWidth = 380; rightWorkspace.style.flexGrow = 1; main.Add(rightWorkspace);
+            rightWorkspace.style.minWidth = 420; rightWorkspace.style.flexGrow = 1; contentSplit.Add(rightWorkspace);
+            // つまみは、2 つのペインが入ってから作られる。
+            RememberRatio(contentSplit, mapPanel, MapRatioKey);
+            var resizeCursor = new SplitResizeCursor(root);
+            resizeCursor.Add(contentSplit);
+            RememberRatio(main, sidebar, IndexRatioKey);
+            resizeCursor.Add(main);
             var noteHeader = new VisualElement(); noteHeader.AddToClassList("note-header"); rightWorkspace.Add(noteHeader);
             var workbench = Row(rightWorkspace); workbench.AddToClassList("workbench");
             workbench.style.flexGrow = 1; workbench.style.minHeight = 0;
-            var sidebar = new VisualElement();
-            sidebar.AddToClassList("sidebar");
-            sidebar.style.width = 185; sidebar.style.minWidth = 160; sidebar.style.flexShrink = 0;
-            sidebar.style.paddingLeft = 12; sidebar.style.paddingRight = 12;
-            workbench.Add(sidebar);
             projectLabel = new Label(); projectLabel.style.whiteSpace = WhiteSpace.Normal;
             notebookPicker = Button(sidebar, "ノート用フォルダを選ぶ ▾", OpenNotebookMenu);
             notebookPicker.style.whiteSpace = WhiteSpace.NoWrap; notebookPicker.style.overflow = Overflow.Hidden;
@@ -162,13 +175,22 @@ namespace Cartograph.EditorUI
                 await CreateEditableNote();
             })); newNoteButton.AddToClassList("primary-action");
             newFolderButton = Button(sidebar, "＋ フォルダ", () => RequestCreateFolder(noteTree.CurrentFolder));
-            var scroll = new ScrollView(); scroll.style.flexGrow = 1; sidebar.Add(scroll);
-            noteTree = new NoteTreeView(); scroll.Add(noteTree);
+            // 索引(検索・並べ替え・ツリー)は、サイドバーの残りの高さを使う。
+            notePicker.style.display = DisplayStyle.None; // ツリーと検索があるので、ノート選択メニューは使わない
+            noteTree = new NoteTreeView(); sidebar.Add(noteTree);
             noteTree.CreateFolderRequested += RequestCreateFolder;
-            noteTree.FolderOpened += folder => Run(async () =>
+            noteTree.MoveRequested += (id, folder) =>
             {
-                if (workspace is ProjectEditorWorkspace target) await target.OpenFolder(folder);
-            });
+                var target = workspace as ProjectEditorWorkspace; if (target == null) return;
+                var tree = target.Tree;
+                Run(async () =>
+                {
+                    if (!ReferenceEquals(tree, target.Tree)) throw new InvalidOperationException("ノートを選び直してください。");
+                    await target.MoveDocument(id, folder);
+                    if (secondaryPane.DocumentId == id) secondaryPane.Hide();
+                    undoHistories.Remove(id); ResetMapContext();
+                });
+            };
             noteTree.CreateNoteRequested += folder => Run(async () =>
             {
                 if (workspace is ProjectEditorWorkspace target) await target.CreateDocumentInFolder(folder);
@@ -330,6 +352,7 @@ namespace Cartograph.EditorUI
 #if ENABLE_INPUT_SYSTEM
             TrackKeyboard();
 #endif
+            ApplyUiScale(); // ウィンドウの大きさが変わったら、拡大率を合わせ直す
             if (root == null || workspace == null) return;
             if (busy || Composing) { UpdateSaveStatus(); return; }
             // The frame after IME confirmation also submits the final value.
@@ -439,6 +462,7 @@ namespace Cartograph.EditorUI
             var documents = workspace.Documents;
             relatedControl.SetNotes(current?.id, documents);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(displayedMap, current?.id));
+            relatedControl.SetSuggestions(MapAnalysisAdapter.SuggestedNotes(displayedMap, current?.id));
             QueueMapRequest(documents);
             reviewed.Bind(workspace as IReviewingEditorWorkspace, current);
             rich.Bind(workspace as IReviewingEditorWorkspace, current);
@@ -459,6 +483,10 @@ namespace Cartograph.EditorUI
             foreach (var item in entries) signature.Append('|').Append(item.DocumentId.Length).Append(':').Append(item.DocumentId)
                 .Append(':').Append(item.RelativePath.Length).Append(':').Append(item.RelativePath)
                 .Append(':').Append(item.Title.Length).Append(':').Append(item.Title);
+            // 日時順のときは、保存のたびに並びが変わりうる。
+            if (noteTree.Sort.Key == NoteSortKey.Updated) foreach (var item in entries) signature.Append('|').Append(item.Updated.Ticks);
+            else if (noteTree.Sort.Key == NoteSortKey.Created) foreach (var item in entries) signature.Append('|').Append(item.Created.Ticks);
+            signature.Append("|sort:").Append(noteTree.Sort.Key).Append(noteTree.Sort.Descending).Append(noteTree.Sort.FoldersFirst);
             // Body edits/save notifications must not reconstruct the entire file list.
             if (listSignature != signature.ToString())
             {
@@ -672,6 +700,24 @@ namespace Cartograph.EditorUI
                 QueueRepaint(); projectTransition.style.display = DisplayStyle.None;
             }).StartingIn(100);
         }
+        // 地図の点線(自動検出の候補)を承認する: どちらかのノートの末尾にリンクを書き足す。
+        // いま開いているノートが片方なら、そのノートに足す。
+        private void AcceptCandidate(MapCandidate candidate) => Run(async () =>
+        {
+            var target = workspace as ProjectEditorWorkspace;
+            if (target == null) return;
+            string owner = candidate.ToNote == activeId ? candidate.ToNote : candidate.FromNote;
+            string other = owner == candidate.FromNote ? candidate.ToNote : candidate.FromNote;
+            await target.AppendRelatedLink(owner, other);
+            if (owner == activeId) reviewed.Bind(null, null);
+        });
+        private void RejectCandidate(MapCandidate candidate)
+        {
+            if (!(workspace is ProjectEditorWorkspace target)) return;
+            if (!target.RejectRelated(candidate.FromNote, candidate.ToNote))
+                message.text = "却下を保存できませんでした。この起動の間だけ、提案しません。";
+            mapVersionSignature = null; QueueMapRequest(workspace.Documents);
+        }
         private async Task DisconnectRelated(string targetId)
         {
             if (!(workspace is IReviewingEditorWorkspace source) || activeId == null)
@@ -725,7 +771,7 @@ namespace Cartograph.EditorUI
             rich?.ResetHistory(); secondaryPane?.ResetHistory();
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
-            displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());
+            displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>()); relatedControl?.SetSuggestions(null);
             mapPanel?.Present(null); focusCursor = -1; focusNote = null; focusText = null;
             // 開いたプロジェクトに保存してあった拠点の位置を、最初の解析結果が来る前に渡す。
             if (workspace is ProjectEditorWorkspace project && project.ProjectRoot != null) mapPanel?.SetSavedLayout(project.LoadMapLayout());
@@ -767,6 +813,7 @@ namespace Cartograph.EditorUI
             displayedMap = snapshot;
             UpdateMapFocus(true);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(snapshot, workspace.Current?.id));
+            relatedControl.SetSuggestions(MapAnalysisAdapter.SuggestedNotes(snapshot, workspace.Current?.id));
         }
         private async void AnalyzeMap(MapRequest request)
         {
@@ -775,7 +822,7 @@ namespace Cartograph.EditorUI
                 mapProjectKey == request.ProjectKey && mapGeneration == request.Generation;
             try
             {
-                var snapshot = await MapAnalysisAdapter.Analyze(source, request, Current);
+                var snapshot = await MapAnalysisAdapter.Analyze(source, request, Current, source.RejectedRelatedPairs().ToArray());
                 if (Current()) PresentMap(snapshot);
             }
             catch (OperationCanceledException) { }
@@ -976,6 +1023,47 @@ namespace Cartograph.EditorUI
                 workspace.State == SaveState.Error ? "保存失敗・未保存" :
                 pending || workspace.State == SaveState.Dirty || workspace.State == SaveState.Saving ? "保存中…" :
                 workspace.State == SaveState.Saved ? "保存済み" : "未保存";
+        }
+
+        // ---- 画面サイズへの追従 -----------------------------------------------------------
+        // UI の拡大率は、画面(ゲームビュー)の大きさに合わせて決める。基準は 1600x900 で 1.0。
+        // 小さい画面で大きすぎず、大きい画面で小さすぎないよう、幅・高さの小さいほうの比で、範囲を区切る。
+        private const float ReferenceWidth = 1600f, ReferenceHeight = 900f, MinUiScale = 0.75f, MaxUiScale = 2f;
+        internal static float UiScaleFor(float width, float height)
+        {
+            if (width <= 0 || height <= 0) return 1f;
+            return Mathf.Clamp(Mathf.Min(width / ReferenceWidth, height / ReferenceHeight), MinUiScale, MaxUiScale);
+        }
+        private int appliedScreenWidth, appliedScreenHeight;
+        private void ApplyUiScale()
+        {
+            if (ownedPanel == null || (Screen.width == appliedScreenWidth && Screen.height == appliedScreenHeight)) return;
+            appliedScreenWidth = Screen.width; appliedScreenHeight = Screen.height;
+            ownedPanel.scale = UiScaleFor(Screen.width, Screen.height);
+        }
+        // 論理ピクセル(拡大率を引いた後)での画面幅。
+        private float LogicalWidth() => Screen.width / (ownedPanel != null ? Mathf.Max(0.1f, ownedPanel.scale) : 1f);
+
+        // 索引とマップの幅は、画面幅に対する割合で決める。ユーザーがドラッグで動かした時だけ、その割合を保存する。
+        private const string IndexRatioKey = "CARTOWORDS.IndexRatio";
+        private const string MapRatioKey = "CARTOWORDS.MapRatio";
+        private float PaneWidth(string key, float defaultRatio, float min, float max)
+        {
+            float width = LogicalWidth();
+            float ratio = PlayerPrefs.GetFloat(key, defaultRatio);
+            if (ratio < 0.05f || ratio > 0.8f) ratio = defaultRatio;
+            return Mathf.Clamp(width * ratio, min, max);
+        }
+        // 分割のつまみを離した時に、固定側ペインの幅の割合を保存する。
+        private void RememberRatio(TwoPaneSplitView split, VisualElement pane, string key)
+        {
+            var handle = SplitResizeCursor.HandleOf(split);
+            if (handle == null) return;
+            handle.RegisterCallback<PointerUpEvent>(_ =>
+            {
+                float width = LogicalWidth();
+                if (width > 1 && pane.resolvedStyle.width >= 100) PlayerPrefs.SetFloat(key, pane.resolvedStyle.width / width);
+            }, TrickleDown.TrickleDown);
         }
 
         private static VisualElement Row(VisualElement parent)

@@ -62,6 +62,48 @@ namespace Cartograph.EditorUI
             catch (IOException) { return false; }
             catch (UnauthorizedAccessException) { return false; }
         }
+        // 却下した関連ノートの候補(.cartograph/related-rejected.txt)。再提案しない。
+        private string RejectedPath => Path.Combine(project.Root, ".cartograph", "related-rejected.txt");
+        private HashSet<Cartograph.Analysis.RelatedPair> rejectedPairs; private string rejectedRoot;
+        public IReadOnlyCollection<Cartograph.Analysis.RelatedPair> RejectedRelatedPairs()
+        {
+            if (project == null) return Array.Empty<Cartograph.Analysis.RelatedPair>();
+            if (rejectedPairs == null || rejectedRoot != project.Root)
+            {
+                try { rejectedPairs = RelatedRejectFile.Parse((fileSystem ?? new DiskFileSystem()).ReadAllText(RejectedPath)); }
+                catch (IOException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
+                catch (UnauthorizedAccessException) { rejectedPairs = new HashSet<Cartograph.Analysis.RelatedPair>(); }
+                rejectedRoot = project.Root;
+            }
+            return rejectedPairs;
+        }
+        /// <summary>候補を却下する。書き込めなくてもこの起動の間は覚えておき、失敗は false で返す。</summary>
+        public bool RejectRelated(string first, string second)
+        {
+            if (project == null) return false;
+            RejectedRelatedPairs();
+            rejectedPairs.Add(new Cartograph.Analysis.RelatedPair(first, second));
+            try { (fileSystem ?? new DiskFileSystem()).WriteAllTextAtomic(RejectedPath, RelatedRejectFile.Serialize(rejectedPairs)); return true; }
+            catch (IOException) { return false; }
+            catch (UnauthorizedAccessException) { return false; }
+        }
+        /// <summary>owner ノートの末尾に other への関連リンクを足す(地図の候補を承認するとき)。</summary>
+        public async Task AppendRelatedLink(string owner, string other)
+        {
+            if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
+            await LoadDocument(owner); await LoadDocument(other);
+            var record = Record(Require(owner));
+            var edit = RelatedNoteLink.Insert(record.markdown, (record.markdown ?? "").Length, owner, other, project.AllNotes().Select(p => p.Value));
+            if (edit.Text == record.markdown) return;
+            int at = (record.markdown ?? "").Length;
+            var result = ReviewDocument(owner, record.revision, new ChangeCandidate
+            {
+                NewText = edit.Text, SelStartBefore = at, SelEndBefore = at,
+                Evidence = new InputEvidence { Kind = EvidenceKind.Format }
+            });
+            if (!result.Approved) throw new InvalidOperationException(result.Reason);
+            await FlushSave();
+        }
         public ProjectEditorWorkspace(NoteSessionOptions options = null, IFileSystem fileSystem = null)
         { this.options = options ?? new NoteSessionOptions { SaveDebounceMs = 200 }; this.fileSystem = fileSystem; }
         public event Action Changed;
@@ -69,8 +111,33 @@ namespace Cartograph.EditorUI
         public string ProjectRoot => project?.Root;
         public string ProjectName => project == null ? "プロジェクトを開いてください" : Path.GetFileName(project.Root);
         public FolderNode Tree => project?.Tree;
-        public IReadOnlyList<NoteTreeEntry> Notes => project == null ? Array.Empty<NoteTreeEntry>() :
-            project.AllNotes().Select(p => new NoteTreeEntry(p.Value, p.Value + ".md", p.Name)).ToArray();
+        public IReadOnlyList<NoteTreeEntry> Notes
+        {
+            get
+            {
+                if (project == null) return Array.Empty<NoteTreeEntry>();
+                bool stale = unchecked(Environment.TickCount - timesStamp) > 1000 || timesProject != project.Root;
+                if (stale) { fileTimes.Clear(); timesStamp = Environment.TickCount; timesProject = project.Root; }
+                return project.AllNotes().Select(p =>
+                {
+                    if (!fileTimes.TryGetValue(p.Value, out var times)) fileTimes[p.Value] = times = ReadFileTimes(p.Value);
+                    return new NoteTreeEntry(p.Value, p.Value + ".md", p.Name, times.Item1, times.Item2);
+                }).ToArray();
+            }
+        }
+        // 索引の並べ替え用。毎回ディスクに触れないよう1秒間キャッシュし、読めなければ「不明」とする。
+        private readonly Dictionary<string, Tuple<DateTime, DateTime>> fileTimes = new Dictionary<string, Tuple<DateTime, DateTime>>();
+        private int timesStamp; private string timesProject;
+        private Tuple<DateTime, DateTime> ReadFileTimes(string id)
+        {
+            try
+            {
+                var file = Path.Combine(project.Root, "notes", id.Replace('/', Path.DirectorySeparatorChar) + ".md");
+                if (!File.Exists(file)) return Tuple.Create(DateTime.MinValue, DateTime.MinValue);
+                return Tuple.Create(File.GetCreationTimeUtc(file), File.GetLastWriteTimeUtc(file));
+            }
+            catch (Exception) { return Tuple.Create(DateTime.MinValue, DateTime.MinValue); }
+        }
         public IReadOnlyList<DocumentRecord> Documents => project == null ? Array.Empty<DocumentRecord>() :
             project.AllNotes().Select(p => open.TryGetValue(p.Value, out var entry) ? Record(entry) :
                 new DocumentRecord { id = p.Value, title = p.Name, markdown = "" }).ToArray();
@@ -103,6 +170,7 @@ namespace Cartograph.EditorUI
         public async Task OpenProject(string absoluteFolderPath)
         {
             await FlushSave();
+            absoluteFolderPath = ProjectRootResolver.Resolve(absoluteFolderPath, fileSystem ?? new DiskFileSystem());
             var next = ProjectWorkspace.Open(absoluteFolderPath, fileSystem, options);
             string nextTitle = (fileSystem ?? new DiskFileSystem()).ReadAllText(Path.Combine(next.Root, ".cartograph", "book-title.txt"));
             if (project != null)
@@ -163,7 +231,22 @@ namespace Cartograph.EditorUI
             if (!NotePath.IsValidName(title)) throw new ArgumentException("ノート名に使えない文字が含まれています。");
             var path = NotePath.Parse(id);
             if (path.Name == title) return;
-            var nextPath = path.WithName(title);
+            await RelocateDocument(id, path.WithName(title), () => project.RenameNote(path, title));
+        }
+
+        /// <summary>ノートを別のフォルダへ移し、他のノートからのリンクを書き換える。folder が空ならルート。</summary>
+        public async Task MoveDocument(string id, string folder)
+        {
+            if (project == null) throw new InvalidOperationException("プロジェクトを開いてください。");
+            var path = NotePath.Parse(id);
+            var nextPath = path.WithFolder(folder);
+            if (nextPath == path) return;
+            await RelocateDocument(id, nextPath, () => project.MoveNote(path, folder));
+        }
+
+        // 名前変更と移動の共通処理。リンクの書き換え範囲を先に求め、移動のあとで適用する。
+        private async Task RelocateDocument(string id, NotePath nextPath, Func<Task<NotePath>> relocate)
+        {
             if (project.NoteExists(nextPath)) throw new IOException("同じ名前のノートがあります。");
             var ids = project.AllNotes().Select(p => p.Value).ToArray();
             foreach (var noteId in ids) await LoadDocument(noteId);
@@ -183,7 +266,7 @@ namespace Cartograph.EditorUI
                 linkUpdates[noteId] = changes;
             }
             await FlushSave();
-            var renamed = await project.RenameNote(path, title);
+            var renamed = await relocate();
             open.Remove(id);
             Attach(await project.OpenNote(renamed));
             if (currentId == id) currentId = renamed.Value;

@@ -68,13 +68,27 @@ namespace Cartograph.EditorUI
             connections.UnionWith(next);
         }
 
+        private List<string> suggested = new List<string>();
+        /// <summary>自動検出で関連しそうなノート(点の高い順)。メニューの先頭に「おすすめ」として出す。</summary>
+        public void SetSuggestions(IEnumerable<string> ids)
+        {
+            suggested = (ids ?? Enumerable.Empty<string>()).Where(id => !string.IsNullOrEmpty(id)).Distinct(StringComparer.Ordinal).Take(5).ToList();
+        }
+
         private void OpenMenu()
         {
             if (targets.Count == 0 || string.IsNullOrEmpty(currentDocumentId)) return;
             var ownerId = currentDocumentId;
             var menu = new GenericDropdownMenu();
-            foreach (var target in targets)
+            // おすすめ(まだつながっていないもの)を先に並べ、そのあとに全ノートを並べる。
+            var ordered = targets.Where(t => suggested.Contains(t.Value) && !connections.Contains(t.Value))
+                .OrderBy(t => suggested.IndexOf(t.Value)).Select(t => new KeyValuePair<string, string>("★ " + t.Key, t.Value)).ToList();
+            int recommended = ordered.Count;
+            ordered.AddRange(targets);
+            for (int index = 0; index < ordered.Count; index++)
             {
+                var target = ordered[index];
+                if (index == recommended && recommended > 0) menu.AddSeparator("");
                 var targetId = target.Value;
                 menu.AddItem(target.Key, connections.Contains(targetId), () =>
                 {

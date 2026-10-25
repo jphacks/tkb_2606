@@ -113,6 +113,12 @@
     color: rgb(210, 222, 232); background-color: rgba(10, 20, 33, 0.93);
     border-radius: 6px; padding: 8px 10px;
 }
+.cartowords .map-candidate-bar {
+    position: absolute; flex-direction: row;
+    padding: 4px; border-radius: 7px; background-color: rgba(10, 20, 33, 0.93);
+    border-width: 1px; border-color: rgb(88, 188, 210);
+}
+.cartowords .map-candidate-bar .unity-button { font-size: 12px; padding: 4px 12px; margin-right: 6px; }
 .cartowords .map-preview-button { position: absolute; bottom: 65px; right: 12px; font-size: 11px; }
 .cartowords .right-workspace { padding: 10px; background-color: rgb(29, 34, 48); }
 .cartowords .note-header { padding: 4px 12px; flex-shrink: 0; }
@@ -149,6 +155,15 @@
 .cartowords .note-title .unity-text-field__input { padding-top: 2px; padding-bottom: 2px; }
 .cartowords .note-row:hover { background-color: rgb(48, 67, 83); border-color: rgb(72, 134, 151); }
 .cartowords .note-row--selected:hover { background-color: rgb(31, 100, 122); }
+/* Note index tree (VSCode style rows). */
+.cartowords .tree-row { border-radius: 4px; border-left-width: 3px; border-left-color: rgba(0, 0, 0, 0); padding-right: 6px; }
+.cartowords .tree-row:hover { background-color: rgb(40, 52, 70); }
+.cartowords .tree-row--folder-current { background-color: rgb(33, 41, 57); }
+.cartowords .tree-row--cursor { border-color: rgb(72, 134, 151); border-width: 1px; border-left-width: 3px; }
+.cartowords .tree-row--selected { background-color: rgb(28, 92, 119); border-left-color: rgb(48, 146, 168); }
+.cartowords .tree-row--selected:hover { background-color: rgb(32, 110, 136); }
+.cartowords .tree-row--drop { background-color: rgb(29, 108, 132); border-color: rgb(88, 208, 217); border-width: 1px; }
+.cartowords .tree-search .unity-text-field__input { padding: 3px 6px; font-size: 12px; border-radius: 5px; }
 .cartowords .town-folder > .unity-foldout__toggle:hover { background-color: rgb(48, 67, 83); }
 .cartowords .town-folder .unity-foldout__content { margin-left: 10px; }
 .cartowords .format-toolbar .unity-button { padding: 2px 5px; font-size: 10px; min-height: 21px; margin-right: 3px; margin-top: 1px; margin-bottom: 3px; }

@@ -122,7 +122,20 @@ namespace Cartograph.Core
         /// <summary>ノート名を変える。本文と、履歴・スナップショットも一緒に移す。</summary>
         public async Task<NotePath> RenameNote(NotePath note, string newName)
         {
-            var target = note.WithName(newName);
+            return await Relocate(note, note.WithName(newName));
+        }
+
+        /// <summary>ノートを別のフォルダへ移す。履歴・スナップショットも一緒に移す。</summary>
+        public Task<NotePath> MoveNote(NotePath note, string folder)
+        {
+            var target = note.WithFolder(folder);
+            string targetDir = Path.GetDirectoryName(paths.NoteFile(target));
+            if (target != note && !fs.DirectoryExists(targetDir)) throw new DirectoryNotFoundException("移動先のフォルダが見つかりません。");
+            return Relocate(note, target);
+        }
+
+        private async Task<NotePath> Relocate(NotePath note, NotePath target)
+        {
             if (target == note) return note;
             if (fs.FileExists(paths.NoteFile(target))) throw new IOException("同じ名前のノートがあります: " + target);
 

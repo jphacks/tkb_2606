@@ -1,5 +1,6 @@
 using System;
 using System.IO;
+using System.Linq;
 using System.Threading.Tasks;
 using Cartograph.Core;
 using Cartograph.Core.Tests;
@@ -77,6 +78,41 @@ namespace Cartograph.IntegrationTests
             await ws.RenameDocument("町/A", "名前");
             Assert.That(ws.Current.id, Is.EqualTo("町/名前")); Assert.That(env.Body("町/名前"), Is.EqualTo("a"));
             Assert.That(env.History("町/名前"), Does.Contain("insert"));
+        }
+        [Test]
+        public async Task ChoosingTheNotesFolderOpensTheProjectAboveIt()
+        {
+            var env = new Env(); env.PutNote("A", "本文");
+            env.Fs.WriteAllTextAtomic(Path.Combine(env.Paths.Root, ".cartograph", "book-title.txt"), "題");
+            var ws = Workspace(env);
+            await ws.OpenProject(Path.Combine(env.Paths.Root, "notes"));
+            Assert.That(ws.ProjectRoot, Is.EqualTo(env.Paths.Root));
+            Assert.That(ws.Documents.Select(d => d.id), Is.EqualTo(new[] { "A" }));
+            // 本当にルートを選んだときは、そのまま開く。
+            await ws.OpenProject(env.Paths.Root);
+            Assert.That(ws.ProjectRoot, Is.EqualTo(env.Paths.Root));
+        }
+        [Test]
+        public async Task MoveDocumentCarriesBodyAndRewritesLinks()
+        {
+            var env = new Env(); env.PutNote("町/A", "本文"); env.PutNote("B", "[[町/A]]");
+            var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            ws.CreateFolder("", "村");
+            await ws.MoveDocument("町/A", "村");
+            Assert.That(env.Body("村/A"), Is.EqualTo("本文"));
+            Assert.That(env.Fs.FileExists(env.Paths.NoteFile(Env.P("町/A"))), Is.False);
+            Assert.That(ws.Documents.Select(d => d.id), Does.Contain("村/A"));
+            Assert.That(env.Body("B"), Is.EqualTo("[[村/A]]"));
+        }
+        [Test]
+        public async Task MoveDocumentToRootAndRejectsNameClash()
+        {
+            var env = new Env(); env.PutNote("町/A", "x"); env.PutNote("A", "y"); env.PutNote("町/C", "z");
+            var ws = Workspace(env); await ws.OpenProject(env.Paths.Root);
+            Assert.ThrowsAsync<IOException>(async () => await ws.MoveDocument("町/A", ""));
+            Assert.That(env.Body("町/A"), Is.EqualTo("x"));
+            await ws.MoveDocument("町/C", "");
+            Assert.That(env.Body("C"), Is.EqualTo("z"));
         }
         [Test]
         public async Task DeleteRetainsBodyAndHistoryInTrashAndSelectsNext()
