@@ -53,6 +53,16 @@ namespace Cartograph.MapUI
         // 置いた自然物(解析のたびに一度だけ決める)。描く時は画面内のものだけ拾う。
         private readonly List<NatureItem> natureItems = new List<NatureItem>();
         private readonly Label hoverLabel = new Label { pickingMode = PickingMode.Ignore, enableRichText = false };
+        // エディタのカーソルがある拠点。クリックで選んだ拠点(selected)とは別に、脈打つ枠で示す。
+        private string editorNode;
+        // マップを操作している間と直後は、自動スクロールを止める。
+        private readonly MapInputGate inputGate = new MapInputGate(3f);
+        private MapPanTween panTween;
+        private float panStartedAt;
+        private IVisualElementScheduledItem panJob;
+        private const float PanSeconds = 0.25f;
+        // 自動スクロールの間は、新しい土地が崩れ始めるのを待つコマ数(140ms 単位)。
+        private const int PanWaitFrames = 2;
 
         public MapCanvas()
         {
@@ -79,6 +89,7 @@ namespace Cartograph.MapUI
             { if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); } else UpdateLabels(); });
             RegisterCallback<PointerDownEvent>(evt =>
             {
+                UserTouched();
                 if (evt.pointerType == UnityEngine.UIElements.PointerType.touch)
                 {
                     dragging = false;
@@ -92,6 +103,7 @@ namespace Cartograph.MapUI
             });
             RegisterCallback<PointerMoveEvent>(evt =>
             {
+                if (dragging || touchGesture.Count > 0) UserTouched();
                 if (touchGesture.Move(evt.pointerId, new MapPoint(evt.localPosition.x, evt.localPosition.y), viewport))
                 { Repaint(); evt.StopPropagation(); return; }
                 if (!dragging) { UpdateHover(evt.localPosition); return; }
@@ -121,6 +133,7 @@ namespace Cartograph.MapUI
             RegisterCallback<DetachFromPanelEvent>(_ => { touchGesture.Clear(); dragging = false; });
             RegisterCallback<WheelEvent>(evt =>
             {
+                UserTouched();
                 viewport.Zoom(Mathf.Exp(-evt.delta.y * 0.08f), new MapPoint(evt.localMousePosition.x, evt.localMousePosition.y));
                 Repaint(); evt.StopPropagation();
             });
@@ -130,26 +143,44 @@ namespace Cartograph.MapUI
         {
             bool firstData = snapshot == null || snapshot.Nodes.Count == 0;
             snapshot = value; lastClick = null;
+            // 見出しの書き換えで ID が変わった拠点は、前の拠点として扱う(位置・選択・カーソルの拠点を引き継ぎ、追加の演出は出さない)。
+            var renamed = value == null ? new Dictionary<string, string>() : MapRename.Match(nodes.Values, value.Nodes);
+            var oldIds = new HashSet<string>(nodes.Keys, StringComparer.Ordinal);
+            foreach (var pair in renamed)
+            {
+                if (positions.TryGetValue(pair.Value, out var kept)) positions[pair.Key] = kept;
+                if (selected == pair.Value) selected = pair.Key;
+                if (editorNode == pair.Value) editorNode = pair.Key;
+            }
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
+            if (value == null || !value.Nodes.Any(n => n.Id == editorNode)) editorNode = null;
             var before = new HashSet<long>(land);
             nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); natureItems.Clear(); HideHover();
             positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
+            var newNodeLand = new HashSet<long>(); MapNode firstAdded = null;
+            // 前の地図と共通の拠点が 1 つもないとき(表示サンプルとの切り替えなど)は、増分ではなく別の地図として扱う。
+            bool incremental = before.Count > 0 && value != null && value.Nodes.Any(n => oldIds.Contains(n.Id) || renamed.ContainsKey(n.Id));
             if (value != null)
             {
                 foreach (var node in value.Nodes)
                 {
                     nodes.Add(node.Id, node);
+                    bool added = incremental && !oldIds.Contains(node.Id) && !renamed.ContainsKey(node.Id);
+                    if (added && firstAdded == null) firstAdded = node;
                     var point = positions[node.Id]; int radius = MapLayout.LandRadius(node.TypedChars);
                     int cx = (int)(point.X / MapLayout.Tile), cy = (int)(point.Y / MapLayout.Tile);
                     for (int x = -radius; x <= radius; x++)
                     for (int y = -radius; y <= radius; y++)
                         if (x * x + y * y <= radius * radius + radius)
-                            PutLand(cx + x, cy + y);
+                        { PutLand(cx + x, cy + y); if (added) newNodeLand.Add(Key(cx + x, cy + y)); }
                 }
                 foreach (var edge in value.Roads) Carve(edge, positions[edge.From], positions[edge.To]);
                 PlaceObjects(value);
-                if (before.Count > 0)
-                    foreach (long key in land) if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame;
+                // 壁が崩れるのは、新しく現れた見出しの土地だけ。文字が増えて土地の半径が広がっただけでは崩さない。
+                // 新しい拠点が画面の外なら、そこへスクロールし終わってから崩れ始める。
+                int wait = firstAdded != null && contentRect.width > 1 && TryAutoScroll(firstAdded.Id) ? PanWaitFrames : 0;
+                foreach (long key in newNodeLand)
+                    if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame + wait;
             }
             foreach (long key in collapsing.Keys.Where(k => !land.Contains(k)).ToList()) collapsing.Remove(key);
             pendingFit = firstData;
@@ -258,7 +289,42 @@ namespace Cartograph.MapUI
         }
         private void HideHover() { if (hoverLabel.style.display != DisplayStyle.None) hoverLabel.style.display = DisplayStyle.None; }
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
-        public void Zoom(float factor) { viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
+        public void Zoom(float factor) { UserTouched(); viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
+        // ユーザーがマップを操作した。動いている自動スクロールをやめ、しばらく自動スクロールを止める。
+        private void UserTouched()
+        {
+            inputGate.Touch(Time.realtimeSinceStartup);
+            panJob?.Pause(); panTween = null;
+        }
+        // エディタのカーソルがある拠点を示す。別の拠点に移ったときだけ、画面の外ならそこへスクロールする。
+        public void SetEditorFocus(string nodeId)
+        {
+            if (nodeId != null && !nodes.ContainsKey(nodeId)) nodeId = null;
+            if (nodeId == editorNode) return;
+            editorNode = nodeId;
+            if (nodeId != null) TryAutoScroll(nodeId);
+            Repaint();
+        }
+        // 拠点が画面の内側の余白より外にあれば、中央へ滑らかにパンする。操作中・操作の直後は何もしない。
+        private bool TryAutoScroll(string nodeId)
+        {
+            if (!positions.TryGetValue(nodeId, out var world) || contentRect.width <= 1) return false;
+            bool active = dragging || touchGesture.Count > 0;
+            if (!inputGate.IsQuiet(Time.realtimeSinceStartup, active)) return false;
+            var at = viewport.Screen(world);
+            if (!MapAutoScroll.TryDelta(at, contentRect.width, contentRect.height, out float dx, out float dy)) return false;
+            panTween = new MapPanTween(dx, dy, PanSeconds); panStartedAt = Time.realtimeSinceStartup;
+            panJob?.Pause();
+            panJob = schedule.Execute(StepPan); panJob.Every(16);
+            return true;
+        }
+        private void StepPan()
+        {
+            if (panTween == null) { panJob?.Pause(); return; }
+            bool done = panTween.Advance(Time.realtimeSinceStartup - panStartedAt, out float dx, out float dy);
+            viewport.Pan(dx, dy); Repaint();
+            if (done) { panJob?.Pause(); panTween = null; }
+        }
         public void FocusSelection()
         {
             if (selected == null || !positions.TryGetValue(selected, out var p)) { Fit(); return; }
@@ -311,9 +377,9 @@ namespace Cartograph.MapUI
                 string name = town.Key.Length == 0 ? "ノート" : town.Key;
                 SetLabel(count++, name, p.X, p.Y, true);
             }
-            foreach (var node in snapshot.Nodes.OrderByDescending(n => n.Id == selected))
+            foreach (var node in snapshot.Nodes.OrderByDescending(n => n.Id == selected || n.Id == editorNode))
             {
-                if (viewport.Scale < 0.3f && node.Id != selected) continue;
+                if (viewport.Scale < 0.3f && node.Id != selected && node.Id != editorNode) continue;
                 var p = viewport.Screen(positions[node.Id]);
                 if (p.X < -40 || p.Y < -30 || p.X > contentRect.width + 40 || p.Y > contentRect.height + 30) continue;
                 if (count >= 106) break;
@@ -404,6 +470,17 @@ namespace Cartograph.MapUI
             foreach (var node in snapshot.Nodes)
                 if (node.Id == selected)
                 { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 14, p.Y - 14, 28, 28, new Color32(86, 210, 218, 255)); }
+            if (editorNode != null && positions.TryGetValue(editorNode, out var focus))
+            {
+                // 拠点の旗と花の置き場(3x3 マス)を囲む金色の枠。拡大率が低くても見えるよう、最小の大きさを確保し、少しだけ脈打たせる。
+                var p = viewport.Screen(focus); float s = viewport.Scale;
+                float pulse = viewport.Scale >= 0.3f ? Math.Abs(frame % 8 - 4) * 0.012f : 0;
+                float half = Mathf.Max(10, MapLayout.Tile * 1.5f * s * (1 + pulse)), thick = Mathf.Max(2, 3 * s);
+                var gold = new Color32(255, 208, 106, 235);
+                AddQuad(quads, p.X - half, p.Y - half, half * 2, half * 2, new Color32(255, 208, 106, 40));
+                AddQuad(quads, p.X - half, p.Y - half, half * 2, thick, gold); AddQuad(quads, p.X - half, p.Y + half - thick, half * 2, thick, gold);
+                AddQuad(quads, p.X - half, p.Y - half, thick, half * 2, gold); AddQuad(quads, p.X + half - thick, p.Y - half, thick, half * 2, gold);
+            }
             Flush(context, quads); quads.Clear();
             // 花・旗・建物は、下の辺が奥(上)にあるものから順に重ねる。
             var objects = new List<DepthSprite>();
@@ -472,8 +549,12 @@ namespace Cartograph.MapUI
                     AddPathOverlay(overlays, key, x, y, open, art);
                     continue;
                 }
-                if (collapsing.TryGetValue(key, out int started) && frame - started < art.Collapse.Length)
-                { AddTile(sprites, x, y, art.Collapse[frame - started]); continue; }
+                if (collapsing.TryGetValue(key, out int started))
+                {
+                    // 崩れ始めるまでは、まだ壁のまま。
+                    if (frame < started) { AddTile(sprites, x, y, art.Wall[MapLayout.StableHash(x + "," + y) % art.Wall.Length]); continue; }
+                    if (frame - started < art.Collapse.Length) { AddTile(sprites, x, y, art.Collapse[frame - started]); continue; }
+                }
                 if (mask != 0) sprite = art.Border[mask];
                 else
                 {

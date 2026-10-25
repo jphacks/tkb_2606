@@ -320,9 +320,24 @@ namespace Cartograph.EditorUI
             else if (reviewed.Enabled) reviewed.Tick();
             else { SubmitTitle(); SubmitBody(ChangeOrigin.Typing); }
             secondaryPane.Tick();
+            UpdateMapFocus(false);
             UpdateSaveStatus(); UpdateUndoButtons();
             if (activeId != null && undoHistories.TryGetValue(activeId, out var history))
                 history.UpdateSelection(body.cursorIndex, body.selectIndex);
+        }
+
+        // カーソルのある拠点をマップに伝える。ノート・カーソル・本文のどれかが変わった時だけ求め直す(force は解析結果が届いた時)。
+        private string focusNote, focusText;
+        private int focusCursor = -1;
+        private void UpdateMapFocus(bool force)
+        {
+            if (mapPanel == null) return;
+            string text = body.value ?? ""; int cursor = EditorCursor;
+            if (!force && focusCursor == cursor && focusNote == activeId && ReferenceEquals(focusText, text)) return;
+            focusCursor = cursor; focusNote = activeId; focusText = text;
+            string node = activeId == null || displayedMap == null ? null :
+                MapFocus.NodeAt(displayedMap.Nodes, activeId, TextLinePosition.LineAt(text, cursor));
+            mapPanel.SetEditorFocus(node);
         }
 
         private bool SubmitTitle()
@@ -619,7 +634,7 @@ namespace Cartograph.EditorUI
             mapRequestJob?.Pause(); mapProjectKey = Guid.NewGuid().ToString("N");
             mapGeneration = 0; mapVersionSignature = null; mapGate.Reset(mapProjectKey);
             displayedMap = null; relatedControl?.SetConnections(Array.Empty<string>());
-            mapPanel?.Present(null);
+            mapPanel?.Present(null); focusCursor = -1; focusNote = null; focusText = null;
             // 開いたプロジェクトに保存してあった拠点の位置を、最初の解析結果が来る前に渡す。
             if (workspace is ProjectEditorWorkspace project && project.ProjectRoot != null) mapPanel?.SetSavedLayout(project.LoadMapLayout());
         }
@@ -658,6 +673,7 @@ namespace Cartograph.EditorUI
                 snapshot.Request.Generation != mapGeneration || !mapGate.TryAccept(snapshot, MapVersions())) return;
             mapPanel.Present(snapshot);
             displayedMap = snapshot;
+            UpdateMapFocus(true);
             relatedControl.SetConnections(MapAnalysisAdapter.ConnectedNotes(snapshot, workspace.Current?.id));
         }
         private async void AnalyzeMap(MapRequest request)

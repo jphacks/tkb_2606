@@ -16,6 +16,13 @@ namespace Cartograph.MapUI
         // 実ノートの拠点の位置が変わった時(表示サンプルでは通知しない)。
         public event Action<IReadOnlyDictionary<string, MapPoint>> LayoutChanged;
         public void SetSavedLayout(IReadOnlyDictionary<string, MapPoint> saved) => canvas.SetSavedLayout(saved);
+        // エディタのカーソルがある拠点。表示サンプルの間は覚えておくだけで、実ノートに戻ったときに示す。
+        private string editorNode;
+        public void SetEditorFocus(string nodeId)
+        {
+            editorNode = nodeId;
+            if (!isPreview) canvas.SetEditorFocus(nodeId);
+        }
 
         public MapPanel()
         {
@@ -31,6 +38,7 @@ namespace Cartograph.MapUI
             {
                 isPreview = !isPreview;
                 canvas.SetSnapshot(isPreview ? Sample() : latest);
+                if (!isPreview) canvas.SetEditorFocus(editorNode);
                 preview.text = isPreview ? "サンプルを閉じる" : "表示サンプル";
                 caption.text = isPreview ? "MAP VIEW / 表示サンプル（実ノートではありません）" : "MAP VIEW";
                 info.text = isPreview ? "ドラッグで移動・ホイールで拡大縮小。サンプルから実ノートは開きません。" : "解析データ待ち";
@@ -56,6 +64,7 @@ namespace Cartograph.MapUI
         {
             latest = snapshot; isPreview = false; preview.text = "表示サンプル";
             caption.text = "MAP VIEW"; canvas.SetSnapshot(snapshot);
+            if (snapshot == null) editorNode = null;
             info.text = snapshot == null ? "解析データ待ち" : snapshot.Nodes.Count + " 拠点・" + snapshot.Roads.Count + " 本の線 / " +
                 (snapshot.Roads.Count == 0 ? "「関連ノート」から相手を選び「線でつなぐ」で追加できます" : "ドラッグで移動・ダブルクリックで開く");
         }
