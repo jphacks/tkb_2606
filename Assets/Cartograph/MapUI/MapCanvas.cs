@@ -43,9 +43,19 @@ namespace Cartograph.MapUI
         public event Action<MapNode> NodeSelected;
         public event Action<MapNode> NodeDoubleClicked;
         public event Action<string> MarkSelected;
+        public event Action<MapBuilding, MapNode> BuildingSelected;
+        public event Action<MapBuilding, MapNode> BuildingDoubleClicked;
+        // 置いた建物。SetSnapshot で、道のマスが決まったあとに決める。
+        private readonly List<BuildingPlacement> placements = new List<BuildingPlacement>();
+        private readonly Label hoverLabel = new Label { pickingMode = PickingMode.Ignore, enableRichText = false };
 
         public MapCanvas()
         {
+            hoverLabel.style.position = Position.Absolute; hoverLabel.style.fontSize = 11; hoverLabel.style.display = DisplayStyle.None;
+            hoverLabel.style.backgroundColor = (Color)new Color32(12, 22, 36, 230);
+            hoverLabel.style.color = (Color)new Color32(236, 226, 190, 255);
+            hoverLabel.style.paddingLeft = hoverLabel.style.paddingRight = 4;
+            Add(hoverLabel);
             name = "knowledge-map"; style.flexGrow = 1; style.minHeight = 200;
             style.overflow = Overflow.Hidden; style.position = Position.Relative;
             labels.style.position = Position.Absolute; labels.style.left = labels.style.top = 0;
@@ -79,10 +89,10 @@ namespace Cartograph.MapUI
             {
                 if (touchGesture.Move(evt.pointerId, new MapPoint(evt.localPosition.x, evt.localPosition.y), viewport))
                 { Repaint(); evt.StopPropagation(); return; }
-                if (!dragging) return;
+                if (!dragging) { UpdateHover(evt.localPosition); return; }
                 Vector2 point = evt.localPosition;
                 if ((point - pointerStart).sqrMagnitude > 25) moved = true;
-                if (moved) { viewport.Pan(point.x - previousPointer.x, point.y - previousPointer.y); Repaint(); }
+                if (moved) { HideHover(); viewport.Pan(point.x - previousPointer.x, point.y - previousPointer.y); Repaint(); }
                 previousPointer = point;
             });
             RegisterCallback<PointerUpEvent>(evt =>
@@ -99,6 +109,7 @@ namespace Cartograph.MapUI
                 if (!moved) SelectAt(evt.localPosition);
                 evt.StopPropagation();
             });
+            RegisterCallback<PointerLeaveEvent>(_ => HideHover());
             RegisterCallback<PointerCaptureOutEvent>(evt => { touchGesture.Up(evt.pointerId, true); dragging = false; });
             RegisterCallback<PointerCancelEvent>(evt =>
             { touchGesture.Up(evt.pointerId, true); this.ReleasePointer(evt.pointerId); dragging = false; });
@@ -116,7 +127,7 @@ namespace Cartograph.MapUI
             snapshot = value; lastClick = null;
             if (value == null || !value.Nodes.Any(n => n.Id == selected)) selected = null;
             var before = new HashSet<long>(land);
-            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear();
+            nodes.Clear(); land.Clear(); pathMask.Clear(); pathKind.Clear(); placements.Clear(); HideHover();
             positions = value == null ? new Dictionary<string, MapPoint>() : MapLayout.Solve(value, positions);
             if (value != null)
             {
@@ -131,6 +142,7 @@ namespace Cartograph.MapUI
                             PutLand(cx + x, cy + y);
                 }
                 foreach (var edge in value.Roads) Carve(edge, positions[edge.From], positions[edge.To]);
+                PlaceBuildings(value);
                 if (before.Count > 0)
                     foreach (long key in land) if (!before.Contains(key) && !collapsing.ContainsKey(key)) collapsing[key] = frame;
             }
@@ -175,6 +187,55 @@ namespace Cartograph.MapUI
                 if (IsPath(i) && !edge.Auto && edge.Kind != RoadKind.Unspecified) pathKind[from] = new KeyValuePair<RoadKind, int>(edge.Kind, dir);
             }
         }
+        // 描ける絵のある建物だけを、旗・花・道を避けて置く。建物のマスは土地にして、足りない土地を広げる。
+        private void PlaceBuildings(MapSnapshot value)
+        {
+            if (value.Buildings.Count == 0) return;
+            var art = MapArt.Instance; var settings = BuildingConfig.Settings;
+            var drawable = value.Buildings.Where(b => HasArt(BuildingSizing.Measure(b, settings), b, art));
+            var cells = new Dictionary<string, long>();
+            foreach (var node in value.Nodes)
+            { var p = positions[node.Id]; cells[node.Id] = MapCell.Key((int)(p.X / MapLayout.Tile), (int)(p.Y / MapLayout.Tile)); }
+            foreach (var placement in BuildingPlacer.Place(drawable, cells, new HashSet<long>(pathMask.Keys), settings))
+            {
+                placements.Add(placement);
+                for (int dx = 0; dx < placement.Size.Width; dx++)
+                for (int dy = 0; dy < placement.Size.Depth; dy++)
+                    PutLand(placement.X + dx, placement.Y + dy);
+            }
+        }
+        private static bool HasArt(BuildingSize size, MapBuilding building, MapArt art)
+            => size.Shape == BuildingShape.Tower ? art.TowerFor(size.Width, MapLayout.StableHash(building.File)) != null : art.Fixed(size.Shape) != null;
+        // 建物が地図上で占める範囲(世界座標)。ビルは地面の1段より上へ伸びる。
+        private static Rect BuildingWorldRect(BuildingPlacement p)
+        {
+            float tile = MapLayout.Tile, width = p.Size.Width * tile;
+            float height = (p.Size.Shape == BuildingShape.Tower ? p.Size.Floors + 2 : p.Size.Depth) * tile;
+            float bottom = (p.Y + p.Size.Depth - 1) * tile + tile / 2;
+            return new Rect((p.X + (p.Size.Width - 1) / 2f) * tile - width / 2, bottom - height, width, height);
+        }
+        // 点にある建物のうち、いちばん手前(下)のものの番号。なければ -1。
+        private int BuildingAt(Vector2 at)
+        {
+            int best = -1; float bestBottom = float.MinValue;
+            for (int i = 0; i < placements.Count; i++)
+            {
+                var w = BuildingWorldRect(placements[i]);
+                var a = viewport.Screen(new MapPoint(w.xMin, w.yMin)); var b = viewport.Screen(new MapPoint(w.xMax, w.yMax));
+                if (at.x < a.X || at.x > b.X || at.y < a.Y || at.y > b.Y || b.Y < bestBottom) continue;
+                best = i; bestBottom = b.Y;
+            }
+            return best;
+        }
+        private void UpdateHover(Vector2 at)
+        {
+            int index = BuildingAt(at);
+            if (index < 0) { HideHover(); return; }
+            var building = placements[index].Building;
+            hoverLabel.text = building.Name + "  ×" + building.Count;
+            hoverLabel.style.left = at.x + 14; hoverLabel.style.top = at.y + 14; hoverLabel.style.display = DisplayStyle.Flex;
+        }
+        private void HideHover() { if (hoverLabel.style.display != DisplayStyle.None) hoverLabel.style.display = DisplayStyle.None; }
         public void Fit() { viewport.Fit(positions.Values, contentRect.width, contentRect.height); Repaint(); }
         public void Zoom(float factor) { viewport.Zoom(factor, new MapPoint(contentRect.width / 2, contentRect.height / 2)); Repaint(); }
         public void FocusSelection()
@@ -192,6 +253,16 @@ namespace Cartograph.MapUI
                 var p = viewport.Screen(positions[mark.Node]); float s = viewport.Scale, reach = Mathf.Max(10, 12 * s);
                 if ((new Vector2(p.X + MarkOffset.x * s, p.Y + MarkOffset.y * s) - at).sqrMagnitude < reach * reach)
                 { selected = mark.Node; lastClick = null; MarkSelected?.Invoke(mark.Message); Repaint(); return; }
+            }
+            int hit = BuildingAt(at);
+            if (hit >= 0)
+            {
+                var building = placements[hit].Building; string key = "\u0001" + building.File + "|" + building.Node;
+                selected = null; BuildingSelected?.Invoke(building, nodes[building.Node]);
+                if (lastClick == key && Time.realtimeSinceStartup - lastClickAt < 0.35f)
+                { lastClick = null; BuildingDoubleClicked?.Invoke(building, nodes[building.Node]); }
+                else { lastClick = key; lastClickAt = Time.realtimeSinceStartup; }
+                Repaint(); return;
             }
             string closest = null; float distance = 24 * 24;
             foreach (var pair in positions)
@@ -313,8 +384,10 @@ namespace Cartograph.MapUI
                 if (node.Id == selected)
                 { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 14, p.Y - 14, 28, 28, new Color32(86, 210, 218, 255)); }
             Flush(context, quads); quads.Clear();
-            AddFlowers(sprites, art); FlushSprites(context, sprites); sprites.Clear();
-            AddFlags(sprites, quads, art); FlushSprites(context, sprites); sprites.Clear();
+            // 花・旗・建物は、下の辺が奥(上)にあるものから順に重ねる。
+            var objects = new List<DepthSprite>();
+            AddFlowers(objects, art); AddFlags(objects, quads, art); AddBuildings(objects, art);
+            FlushOrdered(context, objects);
             foreach (var mark in snapshot.Marks)
             {
                 var at = positions[mark.Node]; var markSprite = art.Marks[(int)mark.Kind];
@@ -402,10 +475,17 @@ namespace Cartograph.MapUI
             int index = kind.Key == RoadKind.Premise ? kind.Value : vertical ? 1 : 0;
             if (index < frames.Length) AddTile(overlays, x, y, frames[index]);
         }
-        private void AddFlowers(List<SpriteDraw> sprites, MapArt art)
+        // 奥行きの順に並べるための絵。Bottom は絵の下の辺の世界座標、Order は追加した順(同じ高さなら後のものが手前)。
+        private readonly struct DepthSprite
+        {
+            public readonly float Bottom;
+            public readonly int Order;
+            public readonly SpriteDraw Draw;
+            public DepthSprite(float bottom, int order, SpriteDraw draw) { Bottom = bottom; Order = order; Draw = draw; }
+        }
+        private void AddFlowers(List<DepthSprite> objects, MapArt art)
         {
             if (snapshot == null) return;
-            var found = new List<KeyValuePair<float, SpriteDraw>>();
             var one = new List<SpriteDraw>(1);
             foreach (var flower in snapshot.Flowers)
             {
@@ -417,22 +497,57 @@ namespace Cartograph.MapUI
                 // 拠点のマスと、そのまわり1マスのどこかに咲かせる。
                 float x = p.X + (hash % 3 - 1) * MapLayout.Tile, bottom = p.Y + (hash / 3 % 3 - 1) * MapLayout.Tile + MapLayout.Tile / 2;
                 one.Clear();
-                if (AddAnchored(one, x, bottom, sprite)) found.Add(new KeyValuePair<float, SpriteDraw>(bottom, one[0]));
+                if (AddAnchored(one, x, bottom, sprite)) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
             }
-            // 奥(上)から手前(下)の順に重ねる。
-            found.Sort((a, b) => a.Key.CompareTo(b.Key));
-            foreach (var pair in found) sprites.Add(pair.Value);
         }
-        private void AddFlags(List<SpriteDraw> sprites, List<Quad> quads, MapArt art)
+        private void AddFlags(List<DepthSprite> objects, List<Quad> quads, MapArt art)
         {
             if (snapshot == null) return;
+            var one = new List<SpriteDraw>(1);
             foreach (var node in snapshot.Nodes.OrderBy(n => positions[n.Id].Y))
             {
                 var frames = art.FlagFor(MapLayout.StableHash(node.Town));
                 if (frames.Length == 0)
                 { var p = viewport.Screen(positions[node.Id]); AddQuad(quads, p.X - 5, p.Y - 5, 10, 10, new Color32(210, 230, 188, 255)); continue; }
                 var at = positions[node.Id];
-                AddAnchored(sprites, at.X, at.Y + MapLayout.Tile / 2, frames[frame % frames.Length]);
+                float bottom = at.Y + MapLayout.Tile / 2;
+                one.Clear();
+                if (AddAnchored(one, at.X, bottom, frames[frame % frames.Length])) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
+            }
+        }
+        // 固定サイズの建物は1枚絵、ビルは1階・中階(a と b を交互)・屋上を下から積む。
+        private void AddBuildings(List<DepthSprite> objects, MapArt art)
+        {
+            var one = new List<SpriteDraw>(1);
+            foreach (var p in placements)
+            {
+                float tile = MapLayout.Tile, x = (p.X + (p.Size.Width - 1) / 2f) * tile, bottom = (p.Y + p.Size.Depth - 1) * tile + tile / 2;
+                float top = bottom;
+                void Part(Sprite sprite)
+                {
+                    if (sprite == null) return;
+                    one.Clear();
+                    if (AddAnchored(one, x, top, sprite)) objects.Add(new DepthSprite(bottom, objects.Count, one[0]));
+                    top -= sprite.rect.height;
+                }
+                if (p.Size.Shape != BuildingShape.Tower) { Part(art.Fixed(p.Size.Shape)); continue; }
+                var tower = art.TowerFor(p.Size.Width, MapLayout.StableHash(p.Building.File));
+                if (tower == null) continue;
+                Part(tower.Ground);
+                for (int floor = 0; floor < p.Size.Floors; floor++) Part(floor % 2 == 0 ? tower.MidA : tower.MidB);
+                Part(tower.Roof);
+            }
+        }
+        private static void FlushOrdered(MeshGenerationContext context, List<DepthSprite> objects)
+        {
+            objects.Sort((a, b) => a.Bottom != b.Bottom ? a.Bottom.CompareTo(b.Bottom) : a.Order.CompareTo(b.Order));
+            var run = new List<SpriteDraw>();
+            for (int i = 0; i < objects.Count; i++)
+            {
+                run.Add(objects[i].Draw);
+                // 同じテクスチャが続く間だけ1つのメッシュにまとめる(順序を保つため、違う絵が挟まれば区切る)。
+                if (i + 1 < objects.Count && objects[i + 1].Draw.Sprite.texture == objects[i].Draw.Sprite.texture) continue;
+                FlushSprites(context, run); run.Clear();
             }
         }
         // 同じ絵(テクスチャ)のものをまとめて1つのメッシュにする。

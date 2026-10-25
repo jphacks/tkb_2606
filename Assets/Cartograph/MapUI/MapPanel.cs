@@ -35,6 +35,13 @@ namespace Cartograph.MapUI
             preview.AddToClassList("map-preview-button"); Add(preview);
             canvas.NodeSelected += node => info.text = node.Title + " / " + node.TypedChars + " 文字 / ダブルクリックで開く";
             canvas.MarkSelected += message => info.text = message;
+            canvas.BuildingSelected += (building, node) =>
+                info.text = building.Name + " / 「" + node.Title + "」に " + building.Count + " 回 / ダブルクリックで開く";
+            canvas.BuildingDoubleClicked += (building, node) =>
+            {
+                if (isPreview) { info.text = "表示サンプルです。実ノートの編集は行いません。"; return; }
+                OpenNoteRequested?.Invoke(building.File, 1);
+            };
             canvas.NodeDoubleClicked += node =>
             {
                 if (isPreview) { info.text = "表示サンプルです。実ノートの編集は行いません。"; return; }
@@ -71,7 +78,12 @@ namespace Cartograph.MapUI
                 new[] { new MapFog("sample-4", 5) }, new[] {
                     new MapMark("sample-4", MarkKind.BrokenLink, "この道の先は、まだ地図にありません"),
                     new MapMark("sample-11", MarkKind.Isolated, "ここは、まだどこともつながっていません"),
-                    new MapMark("sample-6", MarkKind.MissingReason, "この道の理由は、まだ書かれていません") }, flowers);
+                    new MapMark("sample-6", MarkKind.MissingReason, "この道の理由は、まだ書かれていません") }, flowers,
+                buildings: new[] {
+                    new MapBuilding("sample-0", "人物/田中", "田中", 1, 0, 0), new MapBuilding("sample-1", "人物/田中", "田中", 0, 1, 2),
+                    new MapBuilding("sample-2", "人物/鈴木", "鈴木", 1, 2, 3), new MapBuilding("sample-3", "人物/鈴木", "鈴木", 2, 3, 5),
+                    new MapBuilding("sample-5", "場所/図書館", "図書館", 4, 4, 9), new MapBuilding("sample-7", "場所/図書館", "図書館", 0, 0, 1),
+                    new MapBuilding("sample-8", "用語/光合成", "光合成", 5, 5, 12) });
         }
     }
 }

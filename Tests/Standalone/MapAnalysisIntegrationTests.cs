@@ -65,6 +65,21 @@ namespace Cartograph.IntegrationTests
             Assert.Throws<InvalidOperationException>(() => MapAnalysisAdapter.Convert(request, analysis));
         }
         [Test]
+        public void ConvertsProperNounBuildingsWithNoteNameAndEmphasisCounts()
+        {
+            var request = new MapRequest("p", 1, new Dictionary<string, long> { { "人物/田中", 1 }, { "日記", 1 } });
+            var analysis = ProjectAnalyzer.Analyze(new[]
+            {
+                new AnalysisInput(NotePath.Parse("人物/田中"), new LabeledText("別名: 田中\n# 田中さん\n", Origin.Typed), 1),
+                new AnalysisInput(NotePath.Parse("日記"), new LabeledText("# 田中の日\n**田中**が来た。\n", Origin.Typed), 1),
+            });
+            var building = MapAnalysisAdapter.Convert(request, analysis).Buildings.Single();
+            Assert.That(building.Node, Is.EqualTo("日記#田中の日"));
+            Assert.That(building.File, Is.EqualTo("人物/田中"));
+            Assert.That(building.Name, Is.EqualTo("田中"));
+            Assert.That((building.Strong, building.Medium, building.Weak), Is.EqualTo((1, 1, 0)));
+        }
+        [Test]
         public void AddingHeadingPinsExistingPositionsAndRemovingItClearsItsPosition()
         {
             var request = new MapRequest("p", 1, new Dictionary<string, long>());

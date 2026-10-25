@@ -54,7 +54,8 @@ namespace Cartograph.EditorUI
                 result.Edges.Select(e => new MapRoad(e.From, e.To, Road(e.Kind), e.Auto)),
                 result.Fogs.Select(f => new MapFog(f.Node, f.Line)),
                 result.Marks.Select(m => new MapMark(m.Node, Mark(m.Type), m.Message)),
-                result.Flowers.Select(f => new MapFlower(f.Node, f.Line, Flower(f.Emotion), f.Withered)));
+                result.Flowers.Select(f => new MapFlower(f.Node, f.Line, Flower(f.Emotion), f.Withered)),
+                buildings: result.Buildings.Select(b => new MapBuilding(b.Node, b.ProperNounNote.Value, b.ProperNounNote.Name, b.Strong, b.Medium, b.Weak)));
         }
         private static RoadKind Road(EdgeKind value)
         {
