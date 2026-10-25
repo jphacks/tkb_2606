@@ -24,6 +24,8 @@ namespace Cartowords.MapPresentation
     {
         // 本文のこの文字数ごとに 1 個。1 つの拠点の上限と、地図全体の上限。
         public int CharsPerItem = 50, MaxPerNode = 40, TotalCap = 4000;
+        // 土地の空きマスのうち、自然物で埋めてよい割合の上限(0〜1)。1 に近いと、空きマスが木で埋まり、規則正しく並んで見える。
+        public float MaxFillRatio = 0.5f;
         // 本文量(文字数)がこの値以上なら、その段階へ。段階が上がるほど、低木・木・森になる。
         public int BushFrom = 200, TreeFrom = 400, ForestFrom = 900;
         // 大きい木は、拠点の中心からこのマス数以上(縦横のどちらか)離れた所だけに置く。
@@ -40,6 +42,7 @@ namespace Cartowords.MapPresentation
             s.BushFrom = Math.Max(0, s.BushFrom); s.TreeFrom = Math.Max(s.BushFrom, s.TreeFrom); s.ForestFrom = Math.Max(s.TreeFrom, s.ForestFrom);
             s.LargeTreeDistance = Math.Max(1, s.LargeTreeDistance);
             if (float.IsNaN(s.HideBelowScale) || s.HideBelowScale < 0) s.HideBelowScale = 0;
+            s.MaxFillRatio = float.IsNaN(s.MaxFillRatio) ? 0.5f : Math.Max(0f, Math.Min(1f, s.MaxFillRatio));
             return s;
         }
     }
@@ -114,6 +117,8 @@ namespace Cartowords.MapPresentation
             }
             candidates.Sort((a, b) => a.Hash != b.Hash ? a.Hash.CompareTo(b.Hash) : a.X != b.X ? a.X.CompareTo(b.X) : a.Y.CompareTo(b.Y));
 
+            // 空きマスの一定の割合までしか置かない(全部埋めると、木が規則正しく並んで見える)。
+            budget = Math.Min(budget, (int)Math.Ceiling(candidates.Count * s.MaxFillRatio));
             incident.TryGetValue(node.Id, out var kinds);
             int town = MapLayout.StableHash(node.Town);
             int tier = node.TypedChars >= s.ForestFrom ? 3 : node.TypedChars >= s.TreeFrom ? 2 : node.TypedChars >= s.BushFrom ? 1 : 0;
