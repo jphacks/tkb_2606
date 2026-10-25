@@ -20,6 +20,26 @@ namespace Cartograph.EditorUI.Tests
         private static string Describe(List<NatureItem> items) => string.Join(";", items.Select(i => i.Kind + "@" + i.X + "," + i.Y));
 
         [Test]
+        public void FillRatioLeavesGapsInsteadOfFillingEveryFreeCell()
+        {
+            var full = new NatureSettings { MaxFillRatio = 1f, MaxPerNode = 400, CharsPerItem = 1 };
+            var half = new NatureSettings { MaxFillRatio = 0.5f, MaxPerNode = 400, CharsPerItem = 1 };
+            int all = Place(new[] { Node("a", 0, 0, 2500) }, settings: full).Count;
+            int some = Place(new[] { Node("a", 0, 0, 2500) }, settings: half).Count;
+            Assert.That(all, Is.GreaterThan(20));
+            Assert.That(some, Is.LessThan(all));
+            Assert.That(some, Is.EqualTo((int)System.Math.Ceiling(all * 0.5)));
+        }
+
+        [Test]
+        public void InvalidFillRatioIsNormalized()
+        {
+            Assert.That(new NatureSettings { MaxFillRatio = float.NaN }.Normalized().MaxFillRatio, Is.EqualTo(0.5f));
+            Assert.That(new NatureSettings { MaxFillRatio = 3f }.Normalized().MaxFillRatio, Is.EqualTo(1f));
+            Assert.That(new NatureSettings { MaxFillRatio = -1f }.Normalized().MaxFillRatio, Is.EqualTo(0f));
+        }
+
+        [Test]
         public void NodesWithoutTextOrTinyLandGetNothing()
         {
             Assert.That(Place(new[] { Node("a", 0, 0, 0) }), Is.Empty);

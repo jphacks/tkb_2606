@@ -19,13 +19,12 @@ namespace Cartograph.EditorUI.Tests
         }
 
         [TestCase(1, BuildingShape.Hut, 1, 1)]
-        [TestCase(2, BuildingShape.Hut, 1, 1)]
-        [TestCase(3, BuildingShape.House, 2, 2)]
-        [TestCase(7, BuildingShape.House, 2, 2)]
+        [TestCase(2, BuildingShape.House, 2, 2)]
+        [TestCase(4, BuildingShape.House, 2, 2)]
+        [TestCase(5, BuildingShape.Lodge3x2, 3, 2)]
         [TestCase(8, BuildingShape.Lodge3x2, 3, 2)]
-        [TestCase(14, BuildingShape.Lodge3x2, 3, 2)]
-        [TestCase(15, BuildingShape.Lodge3x3, 3, 3)]
-        [TestCase(24, BuildingShape.Lodge3x3, 3, 3)]
+        [TestCase(9, BuildingShape.Lodge3x3, 3, 3)]
+        [TestCase(13, BuildingShape.Lodge3x3, 3, 3)]
         public void WeakMentionsMapToShapeByThreshold(int weak, BuildingShape shape, int width, int depth)
         {
             var size = BuildingSizing.Measure(B("n", "人物/田中", 0, 0, weak), Settings);
@@ -37,13 +36,13 @@ namespace Cartograph.EditorUI.Tests
         [Test]
         public void TowerGainsFloorsWithScoreUpToTheLimit()
         {
-            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 25), Settings).Floors, Is.EqualTo(1));
-            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 35), Settings).Floors, Is.EqualTo(2));
+            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 14), Settings).Floors, Is.EqualTo(1));
+            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 19), Settings).Floors, Is.EqualTo(2));
             Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 9999), Settings).Floors, Is.EqualTo(Settings.MaxFloors));
-            var tower = BuildingSizing.Measure(B("n", "a", 0, 0, 25), Settings);
+            var tower = BuildingSizing.Measure(B("n", "a", 0, 0, 14), Settings);
             Assert.That(tower.Depth, Is.EqualTo(1));
             Assert.That(tower.Width, Is.InRange(1, 3));
-            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 25), Settings).Width, Is.EqualTo(tower.Width));
+            Assert.That(BuildingSizing.Measure(B("n", "a", 0, 0, 14), Settings).Width, Is.EqualTo(tower.Width));
         }
 
         [Test]

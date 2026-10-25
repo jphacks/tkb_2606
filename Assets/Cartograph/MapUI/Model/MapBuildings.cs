@@ -31,9 +31,9 @@ namespace Cartowords.MapPresentation
     {
         public int StrongWeight = 3, MediumWeight = 2, WeakWeight = 1;
         // 点数がこの値以上なら、その段階以上の建物になる。
-        public int HouseFrom = 3, LodgeFrom = 8, LodgeBigFrom = 15, TowerFrom = 25;
+        public int HouseFrom = 2, LodgeFrom = 5, LodgeBigFrom = 9, TowerFrom = 14;
         // ビルは TowerFrom から、この点数ごとに中階が1つ増える。中階は最大 MaxFloors。
-        public int FloorStep = 10, MaxFloors = 6;
+        public int FloorStep = 5, MaxFloors = 6;
         // 1つの拠点に建てる建物の最大数(点数の高い順)。
         public int MaxPerNode = 6;
 
