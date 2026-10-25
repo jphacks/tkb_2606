@@ -1,6 +1,6 @@
 # Cartowords
 
-[![IMAGE ALT TEXT HERE](https://jphacks.com/wp-content/uploads/2026/07/IMG_5316.png)](https://www.youtube.com/watch?v=piaNsc6ilBI)
+[![Cartowords の画面(目次・地図・エディタ)](./Docs/images/screenshot.png)](https://www.youtube.com/watch?v=piaNsc6ilBI)
 
 > 答えを得る時代に、自分の考えを育てる。自分の言葉だけで書く、AI を内蔵しないテキストエディタ。書いた言葉が町になり、地図になる。
 
