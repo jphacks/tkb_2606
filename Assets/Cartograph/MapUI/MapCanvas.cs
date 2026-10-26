@@ -81,9 +81,8 @@ namespace Cartograph.MapUI
         private readonly List<BuildingPlacement> placements = new List<BuildingPlacement>();
         // 置いた自然物(解析のたびに一度だけ決める)。描く時は画面内のものだけ拾う。
         private readonly List<NatureItem> natureItems = new List<NatureItem>();
-        // ノート(ファイル)ごとの人物。描く時の時刻は、アニメのコマ番号から求める。
+        // ノート(ファイル)ごとの人物。移動位置は実時間、歩行の絵はモデルのコマ間隔で決める。
         private List<MapNpc> npcs = new List<MapNpc>();
-        private const double NpcSecondsPerFrame = 0.14;
         private readonly Label hoverLabel = new Label { pickingMode = PickingMode.Ignore, enableRichText = false };
         // エディタのカーソルがある拠点。クリックで選んだ拠点(selected)とは別に、脈打つ枠で示す。
         private string editorNode;
@@ -96,6 +95,9 @@ namespace Cartograph.MapUI
         // 自動スクロールの間は、新しい土地が崩れ始めるのを待つコマ数(140ms 単位)。
         private const int PanWaitFrames = 2;
 
+        private readonly VisualElement terrainLayer = new VisualElement { pickingMode = PickingMode.Ignore };
+        private readonly VisualElement animationLayer = new VisualElement { pickingMode = PickingMode.Ignore };
+
         public MapCanvas()
         {
             hoverLabel.style.position = Position.Absolute; hoverLabel.style.fontSize = 11; hoverLabel.style.display = DisplayStyle.None;
@@ -107,24 +109,39 @@ namespace Cartograph.MapUI
             style.overflow = Overflow.Hidden; style.position = Position.Relative;
             labels.style.position = Position.Absolute; labels.style.left = labels.style.top = 0;
             labels.style.right = labels.style.bottom = 0; Add(labels);
-            generateVisualContent += Draw;
+            foreach (var layer in new[] { terrainLayer, animationLayer })
+            {
+                layer.style.position = Position.Absolute;
+                layer.style.left = layer.style.right = layer.style.top = layer.style.bottom = 0;
+            }
+            Insert(0, terrainLayer); Insert(1, animationLayer);
+            terrainLayer.generateVisualContent += DrawTerrain;
+            animationLayer.generateVisualContent += Draw;
+            // 移動位置だけを約30Hzで更新し、歩行の絵は従来の切り替え間隔を保つ。
+            schedule.Execute(() =>
+            {
+                if (npcs.Count > 0 && viewport.Scale >= NatureConfig.Settings.HideBelowScale)
+                    animationLayer.MarkDirtyRepaint();
+            }).Every(33);
             // 花と旗のアニメ。拡大率が小さい(描く数が多い)時は止めて、再描画を増やさない。
             schedule.Execute(() =>
             {
+                bool terrainAnimating = collapsing.Count > 0;
                 frame++;
                 int length = MapArt.Instance.Collapse.Length;
                 if (collapsing.Count > 0)
                     foreach (long key in collapsing.Where(p => frame - p.Value >= length).Select(p => p.Key).ToList()) collapsing.Remove(key);
                 if (appearing.Count > 0)
                     foreach (string key in appearing.Where(p => frame - p.Value >= BuildingAppearance.Frames).Select(p => p.Key).ToList()) appearing.Remove(key);
-                if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || (npcs.Count > 0 && viewport.Scale >= NatureConfig.Settings.HideBelowScale) || collapsing.Count > 0 || appearing.Count > 0) MarkDirtyRepaint();
+                if ((viewport.Scale >= 0.3f && snapshot != null && snapshot.Nodes.Count > 0) || (npcs.Count > 0 && viewport.Scale >= NatureConfig.Settings.HideBelowScale) || collapsing.Count > 0 || appearing.Count > 0) animationLayer.MarkDirtyRepaint();
+                if (terrainAnimating) terrainLayer.MarkDirtyRepaint();
             }).Every(140);
             RegisterCallback<GeometryChangedEvent>(_ =>
             {
                 if (pendingFit && contentRect.width > 1) { pendingFit = false; Fit(); }
                 // まだ動かしていない地図は、パネルの大きさが変わるたびに全体が収まるよう合わせ直す。
                 else if (!userMoved && contentRect.width > 1 && snapshot != null && snapshot.Nodes.Count > 0) Fit();
-                else UpdateLabels();
+                else Repaint();
             });
             RegisterCallback<PointerDownEvent>(evt =>
             {
@@ -491,7 +508,7 @@ namespace Cartograph.MapUI
             if (selected == null || !positions.TryGetValue(selected, out var p)) { Fit(); return; }
             var at = viewport.Screen(p); viewport.Pan(contentRect.width / 2 - at.X, contentRect.height / 2 - at.Y); Repaint();
         }
-        private void Repaint() { MarkDirtyRepaint(); UpdateLabels(); }
+        private void Repaint() { terrainLayer.MarkDirtyRepaint(); animationLayer.MarkDirtyRepaint(); UpdateLabels(); }
         private void SelectAt(Vector2 at)
         {
             if (snapshot == null) return;
@@ -590,7 +607,7 @@ namespace Cartograph.MapUI
             AddQuad(quads, p.X - size * viewport.Scale / 2, p.Y - size * viewport.Scale / 2,
                 size * viewport.Scale, size * viewport.Scale, color);
         }
-        private void Draw(MeshGenerationContext context)
+        private void DrawTerrain(MeshGenerationContext context)
         {
             var quads = new List<Quad>();
             var art = MapArt.Instance; var sprites = new List<SpriteDraw>();
@@ -611,7 +628,15 @@ namespace Cartograph.MapUI
             if (overviewVisible) DrawOverview(context);
             FlushSprites(context, sprites); sprites.Clear();
             FlushSprites(context, overlays); overlays.Clear();
-            MapProfile.Stop("draw.terrain.flush", phase); phase = MapProfile.Start();
+            MapProfile.Stop("draw.terrain.flush", phase);
+        }
+        private void Draw(MeshGenerationContext context)
+        {
+            viewRect = contentRect;
+            long drawStart = MapProfile.Start(), phase = drawStart;
+            var quads = new List<Quad>();
+            var art = MapArt.Instance; var sprites = new List<SpriteDraw>();
+            var overlays = new List<SpriteDraw>();
             if (snapshot == null) return;
             var painter = context.painter2D;
             // 道の絵が読めない時だけ、色つきの四角で代用する。
@@ -978,7 +1003,7 @@ namespace Cartograph.MapUI
             float tile = MapLayout.Tile;
             var topLeft = viewport.World(new MapPoint(0, 0)); var bottomRight = viewport.World(new MapPoint(viewRect.width, viewRect.height));
             float left = topLeft.X - tile * 2, right = bottomRight.X + tile * 2, top = topLeft.Y - tile * 4, bottom = bottomRight.Y + tile * 2;
-            double seconds = frame * NpcSecondsPerFrame;
+            double seconds = Time.realtimeSinceStartupAsDouble;
             var one = new List<SpriteDraw>(1);
             foreach (var npc in npcs)
             {
